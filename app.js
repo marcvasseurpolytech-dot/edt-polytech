@@ -493,17 +493,91 @@ function draftIssues(d){
 }
 
 /* ---------- Vue ---------- */
+function passFilter(s){
+  var v=S.view;
+  if(v.mode==='all')return true;
+  if(!v.id)return false;
+  if(v.mode==='group')return s.groups.indexOf(v.id)>=0;
+  if(v.mode==='teacher')return s.teachers.indexOf(v.id)>=0;
+  if(v.mode==='room')return s.room===v.id;
+  var c=course(s.course);return !!c&&c.lang===v.id;
+}
 function visibleSlots(){
   var v=S.view,w0=v.week,w1=addDays(v.week,5);
   return S.slots.filter(function(s){
-    if(s.sem!==S.current||s.date<w0||s.date>w1)return false;
-    if(v.mode==='all')return true;
-    if(!v.id)return false;
-    if(v.mode==='group')return s.groups.indexOf(v.id)>=0;
-    if(v.mode==='teacher')return s.teachers.indexOf(v.id)>=0;
-    if(v.mode==='room')return s.room===v.id;
-    var c=course(s.course);return !!c&&c.lang===v.id;
+    return s.sem===S.current&&s.date>=w0&&s.date<=w1&&passFilter(s);
   });
+}
+
+/* ---------- Semaine type ---------- */
+var typeView=/[?&]vue=type(&|$)/.test(location.search);
+var PT=0.85;
+function typeBlocks(){
+  var map={},agg=[];
+  S.slots.filter(function(s){return s.sem===S.current&&passFilter(s);}).forEach(function(s){
+    var d=wd(s.date);
+    var key=[s.course||('t:'+s.title),s.groups.slice().sort().join(','),s.teachers.slice().sort().join(','),s.room||'',d,s.start,s.dur].join('|');
+    var a=map[key];
+    if(!a){a=map[key]={id:'a'+agg.length,day:d,start:s.start,dur:s.dur,room:s.room||'',slot:s,mondays:[]};agg.push(a);}
+    var mo=mondayOf(s.date);
+    if(a.mondays.indexOf(mo)<0)a.mondays.push(mo);
+  });
+  return agg;
+}
+function renderTypeWeek(){
+  var root=$('#tt');root.replaceChildren();
+  var sm=SEM(),agg=typeBlocks();
+  if(!agg.length){
+    root.appendChild(h('div',{class:'empty'},'Aucun cours placé pour ce semestre avec cette sélection.'));
+    return;
+  }
+  var d,nd=agg.some(function(a){return a.day>=5;})?6:5;
+  for(d=0;d<nd;d++){
+    var items=agg.filter(function(a){return a.day===d;});
+    var box=h('section',{class:'tw-day'},h('h2',{},DAYS[d]+' · semaine type '+sm.name));
+    if(!items.length){box.appendChild(h('div',{class:'tw-none'},'Aucun cours'));root.appendChild(box);continue;}
+    var roomIds=S.rooms.map(function(r){return r.id;}).filter(function(id){return items.some(function(a){return a.room===id;});});
+    if(items.some(function(a){return !a.room||roomIds.indexOf(a.room)<0;}))roomIds.push('');
+    var t0=Math.floor(Math.min.apply(null,items.map(function(a){return a.start;}))/60)*60;
+    var t1=Math.ceil(Math.max.apply(null,items.map(function(a){return a.start+a.dur;}))/60)*60;
+    var H=Math.round((t1-t0)*PT),tpl='52px repeat('+roomIds.length+',minmax(130px,1fr))';
+    var heads=h('div',{class:'heads tw-heads',style:'grid-template-columns:'+tpl},h('div',{class:'gut'}));
+    roomIds.forEach(function(rid){heads.appendChild(h('div',{class:'dh'},rid?nm('rooms',rid):'Sans salle'));});
+    var body=h('div',{class:'body',style:'grid-template-columns:'+tpl+';height:'+H+'px;--hh:'+(60*PT)+'px'});
+    var gut=h('div',{class:'gut',style:'height:'+H+'px'});
+    var hr;
+    for(hr=t0/60;hr<=t1/60;hr++)gut.appendChild(h('div',{class:'hl',style:'top:'+Math.round((hr*60-t0)*PT)+'px'},pad(hr)+':00'));
+    body.appendChild(gut);
+    roomIds.forEach(function(rid){
+      var col=h('div',{class:'col',style:'height:'+H+'px'});
+      var list=items.filter(function(a){return rid?a.room===rid:(!a.room||roomIds.indexOf(a.room)<0);});
+      var lay=layout(list);
+      list.forEach(function(a){
+        var s=a.slot,L=lay[a.id],c=slotColor(s);
+        var gl=s.groups.map(function(g){return nm('groups',g);}).join(', ');
+        var tl=s.teachers.map(function(t){return nm('teachers',t);}).join(', ');
+        var wk=fmtWeeks(a.mondays,S.current);
+        var cc=course(s.course),lg=cc?lang(cc.lang):null;
+        var h0=Math.max(18,Math.round(a.dur*PT)-2);
+        var tip=titleOf(s)+(lg?' ('+lg.name+')':'')+'\n'+fmt(a.start)+'-'+fmt(a.start+a.dur)+(gl?'\nGroupes : '+gl:'')+(tl?'\nEnseignants : '+tl:'')+'\nSemaines : '+wk;
+        col.appendChild(h('div',{
+          class:'ev tw-ev',
+          style:'top:'+Math.round((a.start-t0)*PT)+'px;height:'+h0+'px;left:calc('+(L.lane*100/L.lanes)+'% + 1px);width:calc('+(100/L.lanes)+'% - 3px);background:'+c[0]+';border-left-color:'+c[1]+';color:'+c[1],
+          title:tip
+        },
+          h('b',{},(gl?gl+' ':'')+titleOf(s)),
+          h('span',{},fmt(a.start)+'-'+fmt(a.start+a.dur)+(tl?' · '+tl:'')),
+          h('span',{class:'tw-wk'},'sem. '+wk)));
+      });
+      body.appendChild(col);
+    });
+    box.appendChild(heads);box.appendChild(body);root.appendChild(box);
+  }
+  var used={};
+  agg.forEach(function(a){var cc=course(a.slot.course);if(cc&&cc.lang)used[cc.lang]=true;});
+  var leg=h('div',{class:'tw-legend'});
+  S.languages.forEach(function(l){if(used[l.id])leg.appendChild(h('span',{style:'background:'+COLORS[l.color][0]+';border-left:4px solid '+COLORS[l.color][1]+';color:'+COLORS[l.color][1]},l.name));});
+  root.appendChild(leg);
 }
 
 function ensureRange(list){
@@ -550,6 +624,7 @@ function timeFromY(col,clientY,dur){
 }
 
 function renderGrid(){
+  if(typeView){renderTypeWeek();if(CAN_EDIT)renderIssues(allIssues());syncToolbar();return;}
   var vis=visibleSlots();
   ensureRange(vis);
   var v=S.view,n=v.days,t0=v.startH*60,t1=v.endH*60,H=Math.round((t1-t0)*PPM);
@@ -824,6 +899,8 @@ function weekIdx(monday){
 
 function syncToolbar(){
   var v=S.view;
+  document.body.classList.toggle('typeweek',typeView);
+  $('#wtype').textContent=typeView?'Retour au calendrier':'Semaine type';
   $('#mode').value=v.mode;
   var sm=SEM();
   $('#semname').textContent='Semestre '+sm.name+' : du '+fullDate(sm.start)+' au '+fullDate(sm.end);
@@ -843,6 +920,11 @@ function initToolbar(){
   $('#mode').addEventListener('change',function(e){S.view.mode=e.target.value;S.view.id=null;fillItemSelect();save();renderGrid();});
   $('#item').addEventListener('change',function(e){S.view.id=e.target.value;save();renderGrid();});
   $('#sem').addEventListener('change',function(e){switchSemester(e.target.value);});
+  $('#wtype').addEventListener('click',function(){
+    typeView=!typeView;armed=null;
+    try{history.replaceState(null,'',location.pathname+(typeView?'?vue=type':'')+location.hash);}catch(e){}
+    renderAll();
+  });
   $('#prev').addEventListener('click',function(){gotoWeek(addDays(S.view.week,-7));});
   $('#next').addEventListener('click',function(){gotoWeek(addDays(S.view.week,7));});
   $('#today').addEventListener('click',function(){
