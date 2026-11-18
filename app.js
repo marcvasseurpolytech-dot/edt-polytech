@@ -151,8 +151,24 @@ function sample(){
   return o;
 }
 
+function defaultGroupNames(){
+  var out=[];
+  ['TC3','TC4','TC2A3','TC2A4'].forEach(function(y){[1,2,3,4].forEach(function(i){out.push(y+' Gr'+i);});});
+  out.push('M1 GC','M1 GM');
+  return out;
+}
+// Ajoute les groupes habituels qui n'existent pas encore (par nom) ; renvoie le nombre ajouté
+function addDefaultGroups(){
+  var have={},n=0;
+  S.groups.forEach(function(g){have[g.name.toLowerCase()]=true;});
+  defaultGroupNames().forEach(function(nm0){
+    if(have[nm0.toLowerCase()])return;
+    S.groups.push({id:uid(),name:nm0,size:0});n++;
+  });
+  return n;
+}
 function emptyData(){
-  return normalize({semesters:defaultSemesters(),languages:defaultLanguages(),groups:[],teachers:[],rooms:[],courses:[],slots:[],view:defaultView()});
+  return normalize({semesters:defaultSemesters(),languages:defaultLanguages(),groups:defaultGroupNames().map(function(n){return {id:uid(),name:n,size:0};}),teachers:[],rooms:[],courses:[],slots:[],view:defaultView(),seeded:true});
 }
 
 function arr(a){return Array.isArray(a)?a.filter(function(x){return typeof x==='string';}):[];}
@@ -210,6 +226,7 @@ function normalize(o){
       day:clamp(parseInt(t.day,10)||0,0,5),start:clamp(parseInt(t.start,10)||0,0,23*60+45),dur:Math.max(15,parseInt(t.dur,10)||120),
       weeks:arr(t.weeks).filter(validDate)};
   });
+  o.seeded=!!o.seeded;
   o.skips=(Array.isArray(o.skips)?o.skips:[]).filter(function(x){return x&&typeof x.tpl==='string'&&validDate(x.monday);}).map(function(x){return {tpl:x.tpl,monday:x.monday};});
   var v=Object.assign(defaultView(),o.view||{});
   v.days=(+v.days===6)?6:5;
@@ -247,7 +264,7 @@ var saveTimer=null,saving=false,started=false;
 // Empreinte des seules données (pas de la semaine ou de la vue affichée)
 function dataFp(o){
   o=o||S;
-  return JSON.stringify([o.semesters,o.current,o.languages,o.groups,o.teachers,o.rooms,o.courses,o.slots,o.template,o.skips,o.view.days,o.view.startH,o.view.endH]);
+  return JSON.stringify([o.semesters,o.current,o.languages,o.groups,o.teachers,o.rooms,o.courses,o.slots,o.template,o.skips,o.seeded,o.view.days,o.view.startH,o.view.endH]);
 }
 function serialize(){
   var o=JSON.parse(JSON.stringify(S));
@@ -1679,7 +1696,13 @@ function openConfig(tab){
   var content;
   if(tab==='semester')content=semesterTab();
   else if(tab==='languages')content=languagesTab();
-  else if(tab==='groups')content=resTab('groups','Groupes d\'étudiants. L\'effectif sert à vérifier la capacité des salles.','size','Effectif');
+  else if(tab==='groups'){
+    content=resTab('groups','Groupes d\'étudiants. L\'effectif sert à vérifier la capacité des salles. Pour TC3, TC4, TC2A3 et TC2A4, Gr1 est le groupe de niveau le plus fort, jusqu\'à Gr4.','size','Effectif');
+    content.appendChild(h('div',{class:'rrow'},h('button',{onclick:function(){
+      var n=addDefaultGroups();S.seeded=true;save();renderAll();openConfig('groups');
+      toast(n?n+' groupe(s) ajouté(s).':'Tous les groupes habituels sont déjà présents.');
+    }},'Ajouter les groupes habituels (TC3, TC4, TC2A3, TC2A4 Gr1 à Gr4, M1 GC, M1 GM)')));
+  }
   else if(tab==='teachers')content=resTab('teachers','Enseignants et surveillants.','', '');
   else if(tab==='rooms')content=resTab('rooms','Salles et amphis. La capacité déclenche une alerte si les groupes placés sont trop nombreux.','cap','Capacité');
   else content=coursesTab();
@@ -1908,6 +1931,10 @@ function startApp(){
     renderAll();
     if(CAN_EDIT){
       setStatus('ok','Enregistré');
+      if(!S.groups.length&&!S.seeded){
+        var nn=addDefaultGroups();S.seeded=true;save();renderAll();
+        toast(nn+' groupes habituels ajoutés (TC3, TC4, TC2A3, TC2A4 Gr1 à Gr4, M1 GC, M1 GM). Modifie-les dans Configuration > Groupes.');
+      }
       if(!tourSeen())setTimeout(startTour,500);
     }else{
       setInterval(function(){
