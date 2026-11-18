@@ -202,8 +202,15 @@ function normalize(o){
   o.slots=o.slots.filter(function(s){return s&&typeof s==='object'&&validDate(s.date);}).map(function(s){
     return {id:s.id||uid(),sem:validSem(s.sem),course:s.course||'',title:String(s.title||''),date:s.date,
       start:clamp(parseInt(s.start,10)||0,0,23*60+45),dur:Math.max(15,parseInt(s.dur,10)||60),
-      groups:arr(s.groups),teachers:arr(s.teachers),room:s.room||'',note:String(s.note||'')};
+      groups:arr(s.groups),teachers:arr(s.teachers),room:s.room||'',note:String(s.note||''),
+      tpl:typeof s.tpl==='string'?s.tpl:'',tw:validDate(s.tw)?s.tw:'',edited:!!s.edited};
   });
+  o.template=(Array.isArray(o.template)?o.template:[]).filter(function(t){return t&&typeof t==='object';}).map(function(t){
+    return {id:t.id||uid(),sem:validSem(t.sem),course:t.course||'',groups:arr(t.groups),teachers:arr(t.teachers),room:t.room||'',
+      day:clamp(parseInt(t.day,10)||0,0,5),start:clamp(parseInt(t.start,10)||0,0,23*60+45),dur:Math.max(15,parseInt(t.dur,10)||120),
+      weeks:arr(t.weeks).filter(validDate)};
+  });
+  o.skips=(Array.isArray(o.skips)?o.skips:[]).filter(function(x){return x&&typeof x.tpl==='string'&&validDate(x.monday);}).map(function(x){return {tpl:x.tpl,monday:x.monday};});
   var v=Object.assign(defaultView(),o.view||{});
   v.days=(+v.days===6)?6:5;
   v.startH=clamp(parseInt(v.startH,10)||8,0,22);
@@ -240,7 +247,7 @@ var saveTimer=null,saving=false,started=false;
 // Empreinte des seules données (pas de la semaine ou de la vue affichée)
 function dataFp(o){
   o=o||S;
-  return JSON.stringify([o.semesters,o.current,o.languages,o.groups,o.teachers,o.rooms,o.courses,o.slots,o.view.days,o.view.startH,o.view.endH]);
+  return JSON.stringify([o.semesters,o.current,o.languages,o.groups,o.teachers,o.rooms,o.courses,o.slots,o.template,o.skips,o.view.days,o.view.startH,o.view.endH]);
 }
 function serialize(){
   var o=JSON.parse(JSON.stringify(S));
@@ -384,7 +391,7 @@ function semWeeks(semId){
 // Lit une saisie du type "48 49 50 53" ou "48-50, 53" (numéros de semaine ISO)
 function parseWeeks(txt,semId){
   var weeks=semWeeks(semId),errors=[],picked={};
-  String(txt||'').split(/[\s,;]+/).filter(Boolean).forEach(function(tok){
+  String(txt||'').replace(/\s*(?:à|a|au|to)\s*/gi,'-').replace(/\s*-\s*/g,'-').replace(/\bs(?=\d)/gi,'').split(/[\s,;]+/).filter(Boolean).forEach(function(tok){
     var m=/^(\d{1,2})-(\d{1,2})$/.exec(tok),n=/^\d{1,2}$/.test(tok);
     if(n){
       var num=+tok,found=weeks.filter(function(w){return w.num===num;})[0];
@@ -512,30 +519,228 @@ function visibleSlots(){
 /* ---------- Semaine type ---------- */
 var typeView=/[?&]vue=type(&|$)/.test(location.search);
 var PT=0.85;
+function tplOf(id){return S.template.filter(function(t){return t.id===id;})[0]||null;}
+function tplFields(t){
+  return {sem:t.sem,course:t.course,title:'',start:t.start,dur:t.dur,groups:t.groups.slice(),teachers:t.teachers.slice(),room:t.room||'',note:''};
+}
+function tplDesired(t){
+  return t.weeks.filter(function(m,i,a){return a.indexOf(m)===i&&inSemester(addDays(m,t.day),t.sem);}).sort();
+}
+function hasSkip(tid,m){return S.skips.some(function(x){return x.tpl===tid&&x.monday===m;});}
+// Répercute une séance type dans le calendrier : crée, met à jour ou retire les séances non modifiées à la main
+function syncTemplate(t){
+  var want=tplDesired(t),ex=S.slots.filter(function(x){return x.tpl===t.id;});
+  want.forEach(function(m){
+    var cur=ex.filter(function(x){return x.tw===m;})[0],date=addDays(m,t.day);
+    if(!cur){
+      if(!hasSkip(t.id,m))S.slots.push(Object.assign({id:uid(),tpl:t.id,tw:m,edited:false,date:date},tplFields(t)));
+    }else if(!cur.edited){
+      Object.assign(cur,tplFields(t),{date:date});
+    }
+  });
+  ex.forEach(function(x){
+    if(want.indexOf(x.tw)<0&&!x.edited)S.slots=S.slots.filter(function(y){return y!==x;});
+  });
+  S.skips=S.skips.filter(function(x){return x.tpl!==t.id||want.indexOf(x.monday)>=0;});
+}
+function dropTemplate(t){
+  S.slots=S.slots.filter(function(x){return !(x.tpl===t.id&&!x.edited);});
+  S.slots.forEach(function(x){if(x.tpl===t.id){x.tpl='';x.tw='';x.edited=false;}});
+  S.skips=S.skips.filter(function(x){return x.tpl!==t.id;});
+  S.template=S.template.filter(function(x){return x!==t;});
+}
+function tplPass(t){
+  var v=S.view;
+  if(v.mode==='all')return true;
+  if(!v.id)return false;
+  if(v.mode==='group')return t.groups.indexOf(v.id)>=0;
+  if(v.mode==='teacher')return t.teachers.indexOf(v.id)>=0;
+  if(v.mode==='room')return t.room===v.id;
+  var c=course(t.course);return !!c&&c.lang===v.id;
+}
 function typeBlocks(){
+  return S.template.filter(function(t){return t.sem===S.current&&tplPass(t);}).map(function(t){
+    return {id:t.id,day:t.day,start:t.start,dur:t.dur,room:t.room||'',slot:t,t:t,mondays:t.weeks.slice()};
+  });
+}
+// Séances déjà placées à la main (sans lien avec une séance type), regroupées par jour, heure, salle, cours et groupes
+function importableBlocks(){
   var map={},agg=[];
-  S.slots.filter(function(s){return s.sem===S.current&&passFilter(s);}).forEach(function(s){
-    var d=wd(s.date);
-    var key=[s.course||('t:'+s.title),s.groups.slice().sort().join(','),s.teachers.slice().sort().join(','),s.room||'',d,s.start,s.dur].join('|');
+  S.slots.filter(function(x){return x.sem===S.current&&x.course&&!x.tpl;}).forEach(function(x){
+    var key=[x.course,x.groups.slice().sort().join(','),x.teachers.slice().sort().join(','),x.room||'',wd(x.date),x.start,x.dur].join('|');
     var a=map[key];
-    if(!a){a=map[key]={id:'a'+agg.length,day:d,start:s.start,dur:s.dur,room:s.room||'',slot:s,mondays:[]};agg.push(a);}
-    var mo=mondayOf(s.date);
-    if(a.mondays.indexOf(mo)<0)a.mondays.push(mo);
+    if(!a){a=map[key]={day:wd(x.date),slot:x,slots:[]};agg.push(a);}
+    a.slots.push(x);
   });
   return agg;
+}
+function importTemplate(){
+  var n=0;
+  importableBlocks().forEach(function(a){
+    var x=a.slot;
+    if(a.day>5)return;
+    var t={id:uid(),sem:x.sem,course:x.course,groups:x.groups.slice(),teachers:x.teachers.slice(),room:x.room||'',day:a.day,start:x.start,dur:x.dur,weeks:[]};
+    a.slots.forEach(function(sl){
+      var m=mondayOf(sl.date);
+      if(t.weeks.indexOf(m)<0)t.weeks.push(m);
+      sl.tpl=t.id;sl.tw=m;sl.edited=false;
+    });
+    t.weeks.sort();S.template.push(t);n++;
+  });
+  save();renderAll();
+  toast(n?n+' séance(s) type créée(s) à partir du calendrier.':'Aucune séance à importer.');
+}
+
+function openTplEditor(t,pre){
+  var isNew=!t;
+  var d=pre||(t?JSON.parse(JSON.stringify(t)):{id:null,sem:SEM().id,course:'',groups:[],teachers:[],room:'',day:0,start:480,dur:120,weeks:[]});
+  if(d.end==null)d.end=Math.min(1440,d.start+d.dur);
+  if(d.weeksTxt==null)d.weeksTxt=fmtWeeks(d.weeks,d.sem);
+  var warn=h('div',{class:'warnbox okbox'}),info=h('div',{class:'hint'});
+  function weeksNow(){return parseWeeks(d.weeksTxt,d.sem).mondays.sort();}
+  function nowDesired(){
+    return weeksNow().filter(function(m){return inSemester(addDays(m,d.day),d.sem);});
+  }
+  function linked(){return t?S.slots.filter(function(x){return x.tpl===t.id;}):[];}
+  function refresh(){
+    var c=course(d.course),msgs=[],pw=parseWeeks(d.weeksTxt,d.sem),want=nowDesired();
+    pw.errors.forEach(function(e){msgs.push(e);});
+    if(pw.mondays.length>want.length)msgs.push((pw.mondays.length-want.length)+' semaine(s) ignorée(s) : le jour choisi tombe hors du semestre');
+    if(c){
+      var others=placed(c.id)-linked().filter(function(x){return !x.edited||want.indexOf(x.tw)>=0;}).length;
+      var after=others+want.length;
+      info.textContent='Cours : '+after+' / '+c.sessions+' séances placées après enregistrement ('+want.length+' issues de cette séance type).';
+      if(after>c.sessions)msgs.push('Trop de séances : '+after+' pour '+c.sessions+' prévues. Retire des semaines ou augmente le nombre dans Configuration > Cours.');
+    }else info.textContent='Choisis un cours.';
+    if(d.end<=d.start)msgs.push('L\'heure de fin doit être après l\'heure de début');
+    var ex=linked(),shown=0,more=0;
+    if(d.end>d.start)want.forEach(function(m){
+      var cur=ex.filter(function(x){return x.tw===m;})[0];
+      var is=draftIssues({id:cur?cur.id:'new',sem:d.sem,date:addDays(m,d.day),start:d.start,dur:d.end-d.start,groups:d.groups,teachers:d.teachers,room:d.room});
+      if(!is.length)return;
+      if(shown<4){msgs.push('Semaine '+isoWeek(m)+' : '+is[0]+(is.length>1?' (+'+(is.length-1)+')':''));shown++;}else more++;
+    });
+    if(more)msgs.push('... et '+more+' autre(s) semaine(s) avec conflit');
+    warn.replaceChildren();
+    if(msgs.length){warn.className='warnbox';msgs.forEach(function(m){warn.appendChild(h('div',{},'⚠ '+m));});}
+    else{warn.className='warnbox okbox';warn.appendChild(h('div',{},'Aucun conflit.'));}
+  }
+  var courseSel=h('select',{},h('option',{value:''},'Choisis un cours'));
+  S.courses.filter(function(c){return c.sem===d.sem;}).forEach(function(c){
+    courseSel.appendChild(h('option',{value:c.id},c.name+' ('+placed(c.id)+'/'+c.sessions+')'));
+  });
+  courseSel.value=d.course||'';
+  courseSel.addEventListener('change',function(){
+    d.course=courseSel.value;
+    var c=course(d.course);
+    if(c&&isNew){d.groups=c.groups.slice();d.teachers=c.teachers.slice();d.room=c.room||'';d.end=Math.min(1440,d.start+c.dur);}
+    openTplEditor(t,d);
+  });
+  var daySel=h('select',{});
+  DAYS.forEach(function(n,i){daySel.appendChild(h('option',{value:i},n));});
+  daySel.value=d.day;
+  daySel.addEventListener('change',function(){d.day=+daySel.value;refresh();});
+  var en;
+  var st=h('input',{type:'time',step:'300',value:fmt(d.start)});
+  st.addEventListener('change',function(){
+    var m=parseTime(st.value);if(isNaN(m))return;
+    var dur=d.end-d.start;d.start=m;
+    if(dur>0){d.end=Math.min(1440,m+dur);en.value=fmt(Math.min(d.end,1439));}
+    refresh();
+  });
+  en=h('input',{type:'time',step:'300',value:fmt(Math.min(d.end,1439))});
+  en.addEventListener('change',function(){var m=parseTime(en.value);if(isNaN(m))return;d.end=m;refresh();});
+  var weeksInput=h('input',{type:'text',value:d.weeksTxt,placeholder:'ex. 48-50 53'});
+  var chipBox=h('div',{class:'chips'});
+  function drawChips(){
+    chipBox.replaceChildren();
+    var sel=weeksNow();
+    semWeeks(d.sem).forEach(function(w){
+      var on=sel.indexOf(w.monday)>=0;
+      var b=h('button',{type:'button',class:'wk'+(on?' on':''),title:'Semaine '+w.num+' : lundi '+shortDate(w.monday)},String(w.num));
+      b.addEventListener('click',function(){
+        var cur=weeksNow(),i=cur.indexOf(w.monday);
+        if(i>=0)cur.splice(i,1);else cur.push(w.monday);
+        d.weeksTxt=fmtWeeks(cur,d.sem);weeksInput.value=d.weeksTxt;drawChips();refresh();
+      });
+      chipBox.appendChild(b);
+    });
+  }
+  weeksInput.addEventListener('input',function(){d.weeksTxt=weeksInput.value;drawChips();refresh();});
+  drawChips();
+  var r1=h('input',{type:'date','aria-label':'Du'}),r2=h('input',{type:'date','aria-label':'Au'});
+  function applyRange(){
+    if(!validDate(r1.value)||!validDate(r2.value)||r2.value<r1.value)return;
+    var m1=mondayOf(r1.value),m2=mondayOf(r2.value);
+    var pick=semWeeks(d.sem).map(function(w){return w.monday;}).filter(function(m){return m>=m1&&m<=m2;});
+    d.weeksTxt=fmtWeeks(pick,d.sem);weeksInput.value=d.weeksTxt;drawChips();refresh();
+  }
+  r1.addEventListener('change',applyRange);r2.addEventListener('change',applyRange);
+  var rangeRow=h('div',{class:'row2'},h('div',{class:'f'},h('label',{},'Du'),r1),h('div',{class:'f'},h('label',{},'Au'),r2));
+  function doSave(){
+    var c=course(d.course),want=nowDesired(),pw=parseWeeks(d.weeksTxt,d.sem);
+    if(!c){toast('Choisis un cours');return;}
+    if(d.end<=d.start){toast('L\'heure de fin doit être après l\'heure de début');return;}
+    if(pw.errors.length){toast(pw.errors[0]);return;}
+    if(!want.length){toast('Indique au moins une semaine dans le semestre');return;}
+    var others=placed(c.id)-(t?S.slots.filter(function(x){return x.tpl===t.id&&(!x.edited||want.indexOf(x.tw)>=0);}).length:0);
+    if(others+want.length>c.sessions){toast('Trop de séances : '+(others+want.length)+' pour '+c.sessions+' prévues pour « '+c.name+' ».');return;}
+    var rec=t||{id:uid()};
+    Object.assign(rec,{sem:d.sem,course:d.course,groups:d.groups.slice(),teachers:d.teachers.slice(),room:d.room||'',day:d.day,start:d.start,dur:d.end-d.start,weeks:pw.mondays.slice().sort()});
+    if(isNew)S.template.push(rec);
+    syncTemplate(rec);
+    save();closeModal();renderAll();
+    toast('Semaine type enregistrée : '+want.length+' séance(s) dans le calendrier.');
+  }
+  function doDel(){
+    confirmBox('Supprimer cette séance type ? Les séances du calendrier qui en viennent et n\'ont pas été modifiées à la main seront supprimées (elles redeviennent à placer).',function(){
+      dropTemplate(t);save();closeModal();renderAll();toast('Séance type supprimée');
+    },'Supprimer');
+  }
+  var actions=h('div',{class:'actions'});
+  if(!isNew)actions.appendChild(h('button',{class:'danger',onclick:doDel},'Supprimer'));
+  actions.appendChild(h('span',{class:'sp'}));
+  actions.appendChild(h('button',{onclick:closeModal},'Annuler'));
+  actions.appendChild(h('button',{class:'primary',onclick:doSave},'Enregistrer'));
+  openModal(h('div',{class:'modal'},
+    h('h2',{},isNew?'Nouvelle séance type':'Modifier la séance type'),
+    h('p',{class:'hint'},'Ce que tu règles ici se répercute dans le calendrier, semaine par semaine. Les séances déplacées ou modifiées à la main dans le calendrier ne sont pas touchées.'),
+    h('div',{class:'f'},h('label',{},'Cours'),courseSel,info),
+    h('div',{class:'row2'},
+      h('div',{class:'f'},h('label',{},'Jour'),daySel),
+      h('div',{class:'f'},h('label',{},'Début'),st),
+      h('div',{class:'f'},h('label',{},'Fin'),en)),
+    h('div',{class:'f'},h('label',{},'Semaines (numéros ISO : 48 49 50 53, 48-50 53, S37 à S42)'),weeksInput,chipBox),
+    h('div',{class:'f'},h('label',{},'Ou de telle date à telle date (toutes les semaines comprises)'),rangeRow),
+    h('div',{class:'f'},h('div',{class:'lb'},'Groupes'),chipsBox('groups',d.groups,refresh)),
+    h('div',{class:'f'},h('div',{class:'lb'},'Enseignants'),chipsBox('teachers',d.teachers,refresh)),
+    h('div',{class:'f'},h('label',{},'Salle / amphi'),roomSelect(d.room,function(v){d.room=v;refresh();})),
+    warn,actions));
+  refresh();
 }
 function renderTypeWeek(){
   var root=$('#tt');root.replaceChildren();
   var sm=SEM(),agg=typeBlocks();
   if(!agg.length){
-    root.appendChild(h('div',{class:'empty'},'Aucun cours placé pour ce semestre avec cette sélection.'));
+    var em=h('div',{class:'empty'},S.template.some(function(t){return t.sem===S.current;})?'Aucune séance type pour cette sélection.':'La semaine type de ce semestre est vide.');
+    if(CAN_EDIT){
+      em.appendChild(h('div',{},h('button',{class:'primary',onclick:function(){openTplEditor(null);}},'+ Séance type')));
+      if(importableBlocks().length)em.appendChild(h('div',{style:'margin-top:8px'},h('button',{onclick:importTemplate},'Créer la semaine type à partir des séances déjà placées dans le calendrier')));
+    }
+    root.appendChild(em);
     return;
   }
   var d,nd=agg.some(function(a){return a.day>=5;})?6:5;
   for(d=0;d<nd;d++){
     var items=agg.filter(function(a){return a.day===d;});
     var box=h('section',{class:'tw-day'},h('h2',{},DAYS[d]+' · semaine type '+sm.name));
-    if(!items.length){box.appendChild(h('div',{class:'tw-none'},'Aucun cours'));root.appendChild(box);continue;}
+    if(!items.length){
+      box.appendChild(h('div',{class:'tw-none'},'Aucun cours'));
+      if(CAN_EDIT)(function(day){
+        box.appendChild(h('button',{onclick:function(){openTplEditor(null,{id:null,sem:SEM().id,course:'',groups:[],teachers:[],room:'',day:day,start:480,end:600,dur:120,weeks:[]});}},'+ Séance type'));
+      })(d);
+      root.appendChild(box);continue;
+    }
     var roomIds=S.rooms.map(function(r){return r.id;}).filter(function(id){return items.some(function(a){return a.room===id;});});
     if(items.some(function(a){return !a.room||roomIds.indexOf(a.room)<0;}))roomIds.push('');
     var t0=Math.floor(Math.min.apply(null,items.map(function(a){return a.start;}))/60)*60;
@@ -550,6 +755,14 @@ function renderTypeWeek(){
     body.appendChild(gut);
     roomIds.forEach(function(rid){
       var col=h('div',{class:'col',style:'height:'+H+'px'});
+      (function(day,room,T0,T1){
+        col.addEventListener('click',function(e){
+          if(!CAN_EDIT||e.target!==col)return;
+          var r=col.getBoundingClientRect();
+          var m=clamp(T0+Math.floor((e.clientY-r.top)/PT/SNAP)*SNAP,T0,Math.max(T0,T1-120));
+          openTplEditor(null,{id:null,sem:SEM().id,course:'',groups:[],teachers:[],room:room,day:day,start:m,end:Math.min(1440,m+120),dur:120,weeks:[]});
+        });
+      })(d,rid,t0,t1);
       var list=items.filter(function(a){return rid?a.room===rid:(!a.room||roomIds.indexOf(a.room)<0);});
       var lay=layout(list);
       list.forEach(function(a){
@@ -560,14 +773,16 @@ function renderTypeWeek(){
         var cc=course(s.course),lg=cc?lang(cc.lang):null;
         var h0=Math.max(18,Math.round(a.dur*PT)-2);
         var tip=titleOf(s)+(lg?' ('+lg.name+')':'')+'\n'+fmt(a.start)+'-'+fmt(a.start+a.dur)+(gl?'\nGroupes : '+gl:'')+(tl?'\nEnseignants : '+tl:'')+'\nSemaines : '+wk;
-        col.appendChild(h('div',{
-          class:'ev tw-ev',
+        var evT=h('div',{
+          class:'ev tw-ev'+(CAN_EDIT?' tw-edit':''),
           style:'top:'+Math.round((a.start-t0)*PT)+'px;height:'+h0+'px;left:calc('+(L.lane*100/L.lanes)+'% + 1px);width:calc('+(100/L.lanes)+'% - 3px);background:'+c[0]+';border-left-color:'+c[1]+';color:'+c[1],
           title:tip
         },
           h('b',{},(gl?gl+' ':'')+titleOf(s)),
           h('span',{},fmt(a.start)+'-'+fmt(a.start+a.dur)+(tl?' · '+tl:'')),
-          h('span',{class:'tw-wk'},'sem. '+wk)));
+          h('span',{class:'tw-wk'},'sem. '+wk));
+        evT.addEventListener('click',function(){if(CAN_EDIT)openTplEditor(a.t);});
+        col.appendChild(evT);
       });
       body.appendChild(col);
     });
@@ -690,6 +905,7 @@ function renderGrid(){
       var h0=Math.max(14,Math.round(s.dur*PPM)-2);
       var tip=titleOf(s)+'\n'+DAYS[day]+' '+shortDate(s.date)+' '+fmt(s.start)+'-'+fmt(s.start+s.dur)+
         (gl?'\nGroupes : '+gl:'')+(tl?'\nEnseignants : '+tl:'')+(rm?'\nSalle : '+rm:'')+(s.note?'\n'+s.note:'');
+      if(s.tpl&&s.edited)tip+='\n\nModifiée par rapport à la semaine type';
       if(bad[s.id])tip+='\n\nATTENTION : conflit, capacité dépassée ou hors semestre';
       var ev=h('div',{
         class:'ev'+(bad[s.id]?' bad':''),
@@ -750,6 +966,7 @@ function startDrag(e,slot,mode){
     document.removeEventListener('pointercancel',up);
     if(moved){
       justDragged=true;setTimeout(function(){justDragged=false;},80);
+      if(slot.tpl)slot.edited=true;
       save();
     }else{
       openEditor(slot);
@@ -936,6 +1153,7 @@ function initToolbar(){
     if(validDate(e.target.value))gotoWeek(mondayOf(e.target.value));
   });
   $('#add').addEventListener('click',function(){
+    if(typeView){openTplEditor(null);return;}
     var d=S.view.week;
     if(!inSemester(d))d=SEM().start;
     openEditor(newDraft(d,S.view.startH*60+60));
@@ -1165,7 +1383,9 @@ function openEditor(slot,pre){
         toast('Les séances de « '+c.name+' » sont déjà toutes placées.');
         return;
       }
+      var before=JSON.stringify([old.course,old.date,old.start,old.dur,old.groups,old.teachers,old.room]);
       Object.assign(old,base);
+      if(old.tpl&&before!==JSON.stringify([old.course,old.date,old.start,old.dur,old.groups,old.teachers,old.room]))old.edited=true;
     }
     save();closeModal();renderAll();
     if(made>1)toast(made+' séances créées');
@@ -1174,14 +1394,15 @@ function openEditor(slot,pre){
     var c=course(slot.course);
     if(c&&remaining(c)<=0){toast('Les séances de « '+c.name+' » sont déjà toutes placées.');return;}
     var copy=JSON.parse(JSON.stringify(slot));
-    copy.id=uid();copy.date=addDays(copy.date,7);
+    copy.id=uid();copy.date=addDays(copy.date,7);copy.tpl='';copy.tw='';copy.edited=false;
     S.slots.push(copy);save();closeModal();renderAll();
     toast('Dupliqué à la semaine suivante');
   }
   function doDel(){
     confirmBox('Supprimer la séance « '+titleOf(slot)+' » du '+shortDate(slot.date)+' ? Elle sera de nouveau comptée comme à placer.',function(){
       S.slots=S.slots.filter(function(x){return x.id!==slot.id;});
-      save();renderAll();toast('Séance supprimée');
+      if(slot.tpl&&slot.tw&&tplOf(slot.tpl)&&!hasSkip(slot.tpl,slot.tw))S.skips.push({tpl:slot.tpl,monday:slot.tw});
+      save();renderAll();toast(slot.tpl?'Séance annulée dans le calendrier (la semaine type est inchangée). Elle est de nouveau à placer.':'Séance supprimée');
     },'Supprimer');
   }
 
@@ -1189,6 +1410,11 @@ function openEditor(slot,pre){
   if(!isNew){
     actions.appendChild(h('button',{class:'danger',onclick:doDel},'Supprimer'));
     actions.appendChild(h('button',{onclick:doDup},'Dupliquer (+1 semaine)'));
+    if(slot.tpl&&slot.edited&&tplOf(slot.tpl))actions.appendChild(h('button',{onclick:function(){
+      var cur=S.slots.filter(function(x){return x.id===slot.id;})[0],tt=tplOf(slot.tpl);
+      if(!cur||!tt)return;
+      cur.edited=false;syncTemplate(tt);save();closeModal();renderAll();toast('Séance rétablie selon la semaine type');
+    }},'Rétablir selon la semaine type'));
   }
   actions.appendChild(h('span',{class:'sp'}));
   actions.appendChild(h('button',{onclick:closeModal},'Annuler'));
@@ -1222,7 +1448,7 @@ function removeRes(kind,id,tab){
     if(kind==='rooms'&&c.room===id)c.room='';
     if(kind==='languages'&&c.lang===id)c.lang='';
   });
-  S.slots.forEach(function(s){
+  S.slots.concat(S.template).forEach(function(s){
     if(kind==='groups')s.groups=s.groups.filter(function(x){return x!==id;});
     if(kind==='teachers')s.teachers=s.teachers.filter(function(x){return x!==id;});
     if(kind==='rooms'&&s.room===id)s.room='';
@@ -1264,6 +1490,8 @@ function semesterTab(){
       confirmBox('Supprimer le semestre '+m.name+' avec ses '+nc+' cours et ses '+ns+' séances ?',function(){
         S.semesters=S.semesters.filter(function(x){return x.id!==m.id;});
         S.courses=S.courses.filter(function(c){return c.sem!==m.id;});
+        S.template=S.template.filter(function(t){return t.sem!==m.id;});
+        S.skips=S.skips.filter(function(k){return S.template.some(function(t){return t.id===k.tpl;});});
         S.slots=S.slots.filter(function(x){return x.sem!==m.id;});
         if(S.current===m.id){S.current=S.semesters[0].id;armed=null;}
         fixWeek(S);save();renderAll();openConfig('semester');
@@ -1369,6 +1597,8 @@ function coursesTab(){
         confirmBox('Supprimer le cours « '+c.name+' »'+(n?' et ses '+n+' séance(s) déjà placée(s)':'')+' ?',function(){
           S.slots=S.slots.filter(function(s){return s.course!==c.id;});
           S.courses=S.courses.filter(function(x){return x.id!==c.id;});
+          S.template=S.template.filter(function(t){return t.course!==c.id;});
+          S.skips=S.skips.filter(function(k){return S.template.some(function(t){return t.id===k.tpl;});});
           save();renderAll();openConfig('courses');
         },'Supprimer',function(){openConfig('courses');});
       }},'Supprimer')));
@@ -1510,11 +1740,12 @@ var TOUR=[
   {sel:'.top .wk',t:'2. Navigue par semaine',p:'Les flèches changent de semaine. Le numéro affiché est le numéro de semaine ISO (48, 49, 53...), comme dans ton calendrier. Tu peux aussi sauter à une date précise.'},
   {sel:'#cfg',t:'3. Commence par la configuration',p:'Tu y règles les semestres (dates), les langues (Anglais, Allemand, Espagnol, FLE, Autre, avec leurs couleurs), les groupes (effectifs), les enseignants, les salles (capacités) et les cours. Pour chaque cours, tu indiques son nombre de séances : il est propre à chaque cours.'},
   {sel:'#courses',t:'4. Les séances à placer',p:'Chaque cours affiche un compteur, par exemple 5/12 : séances placées sur séances prévues. Clique sur un cours pour passer en mode placement, ou fais-le glisser vers la grille.'},
-  {sel:'#tt',t:'5. Place les séances',p:'En mode placement, clique dans la grille : le jour et l\'heure sont ceux de ton clic (2 h par défaut). Dans la barre jaune, tape les semaines, par exemple 48-50 53, pour créer d\'un coup toutes les séances d\'un cours le lundi à 8 h. Le compteur descend à chaque séance et l\'appli refuse d\'en placer plus que prévu.'},
+  {sel:'#tt',t:'5. Place les séances',p:'Pour une séance isolée ou un rattrapage, passe par le calendrier. En mode placement, clique dans la grille : le jour et l\'heure sont ceux de ton clic (2 h par défaut). Dans la barre jaune, tape les semaines, par exemple 48-50 53, pour créer d\'un coup toutes les séances d\'un cours le lundi à 8 h. Le compteur descend à chaque séance et l\'appli refuse d\'en placer plus que prévu.'},
   {sel:'#tt',t:'6. Ajuste une séance',p:'Clique sur une séance pour la modifier, la dupliquer ou la supprimer. Glisse-la pour changer le jour ou l\'heure, tire sa base pour changer la durée. Une séance supprimée repart dans les séances à placer.'},
-  {sel:'#conf',t:'7. Le contrôle',p:'L\'appli vérifie en continu : groupe, enseignant ou salle en double, salle trop petite, séance hors semestre, trop de séances pour un cours. Les séances concernées sont cerclées de rouge ; clique sur une ligne pour la corriger.'},
-  {sel:'#mode',t:'8. Filtre la vue',p:'Affiche tout, ou seulement un groupe, un enseignant, une salle ou une langue : pratique pour vérifier ou imprimer un emploi du temps individuel.'},
-  {sel:'#exp',t:'9. Sauvegarde',p:'Tout s\'enregistre automatiquement sur le serveur : le voyant « Enregistré » en haut le confirme, sans aucun redéploiement. La vue utilisateur (adresse sans /admin) est en lecture seule et se met à jour toute seule pour la projection. Export / Import permet de garder une copie JSON et de récupérer des CSV pour Excel.'},
+  {sel:'#wtype',t:'7. La semaine type',p:'Ce bouton affiche la semaine type : un tableau par jour, une colonne par salle, avec le groupe, la langue, l\'enseignant et les semaines de chaque cours. C\'est là que tu construis l\'emploi du temps de base : clique dans une colonne (ou sur « + Séance »), choisis le cours, le jour, l\'heure et les semaines. Chaque séance type est répercutée automatiquement dans le calendrier, semaine par semaine. L\'inverse n\'est pas vrai : si tu annules, déplaces ou modifies une séance dans le calendrier, la semaine type ne bouge pas, et une séance annulée repart dans les séances à placer pour être reprogrammée ailleurs. Dans le calendrier, « Rétablir selon la semaine type » annule une modification manuelle.'},
+  {sel:'#conf',t:'8. Le contrôle',p:'L\'appli vérifie en continu : groupe, enseignant ou salle en double, salle trop petite, séance hors semestre, trop de séances pour un cours. Les séances concernées sont cerclées de rouge ; clique sur une ligne pour la corriger.'},
+  {sel:'#mode',t:'9. Filtre la vue',p:'Affiche tout, ou seulement un groupe, un enseignant, une salle ou une langue : pratique pour vérifier ou imprimer un emploi du temps individuel.'},
+  {sel:'#exp',t:'10. Sauvegarde',p:'Tout s\'enregistre automatiquement sur le serveur : le voyant « Enregistré » en haut le confirme, sans aucun redéploiement. La vue utilisateur (adresse sans /admin) est en lecture seule et se met à jour toute seule pour la projection. Export / Import permet de garder une copie JSON et de récupérer des CSV pour Excel.'},
   {sel:null,t:'C\'est parti',p:'Tu peux relancer ce tutoriel à tout moment avec le bouton « Tutoriel ». Commence par Configuration pour saisir tes cours et leur nombre de séances.'}
 ];
 var tourIdx=-1;

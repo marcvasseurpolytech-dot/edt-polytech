@@ -123,6 +123,8 @@ textarea{width:100%;min-height:200px;border:1px solid var(--line);border-radius:
 .tw-heads{position:static}
 .tw-none{color:var(--muted);font-size:13px;padding:6px 0}
 .tw-ev{cursor:default}
+.tw-ev.tw-edit{cursor:pointer}
+.tw-day>button{margin:4px 0}
 .tw-ev .tw-wk{font-weight:600}
 .tw-legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .tw-legend span{padding:2px 10px;border-radius:6px;font-size:12px;font-weight:600}
