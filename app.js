@@ -167,8 +167,27 @@ function addDefaultGroups(){
   });
   return n;
 }
+function defaultTeacherNames(){
+  return ['M Vasseur','C Thepenier','M Duchateau','JY Beaury','M Chayani','R Eaton','F Debosscher','S Goncalves','P Rojo','E Labrador','J Marfil','M Ortega','C Jaramillo','Y Zaknoune','N Andouri','M Ramirez','M Fonseca','A Pazo','M Vazquez','G San Juan','C Gusinde','B Loeber','S Furste','M Boussadia','B Deerberg','S Mogge'];
+}
+function defaultRoomNames(){
+  return ['Labo E403','Labo E405','Labo E410','Labo E402','Salle B303','Salle B305','Salle B307','Salle B008','Salle B010','Salle B306'];
+}
+// Ajoute les noms qui n'existent pas encore (par nom) ; renvoie le nombre ajouté
+function addDefaultNames(kind,names,field){
+  var have={},n=0;
+  S[kind].forEach(function(x){have[x.name.toLowerCase()]=true;});
+  names.forEach(function(nm0){
+    if(have[nm0.toLowerCase()])return;
+    var o={id:uid(),name:nm0};if(field)o[field]=0;
+    S[kind].push(o);n++;
+  });
+  return n;
+}
+function addDefaultTeachers(){return addDefaultNames('teachers',defaultTeacherNames(),'');}
+function addDefaultRooms(){return addDefaultNames('rooms',defaultRoomNames(),'cap');}
 function emptyData(){
-  return normalize({semesters:defaultSemesters(),languages:defaultLanguages(),groups:defaultGroupNames().map(function(n){return {id:uid(),name:n,size:0};}),teachers:[],rooms:[],courses:[],slots:[],view:defaultView(),seeded:true});
+  return normalize({semesters:defaultSemesters(),languages:defaultLanguages(),groups:defaultGroupNames().map(function(n){return {id:uid(),name:n,size:0};}),teachers:defaultTeacherNames().map(function(n){return {id:uid(),name:n};}),rooms:defaultRoomNames().map(function(n){return {id:uid(),name:n,cap:0};}),courses:[],slots:[],view:defaultView(),seeded:true,seededRes:true});
 }
 
 function arr(a){return Array.isArray(a)?a.filter(function(x){return typeof x==='string';}):[];}
@@ -203,7 +222,15 @@ function normalize(o){
       return r;
     });
   }
+  // rattachement : chaque groupe peut etre rattache a un autre groupe existant
+  var rawAtt={};
+  (Array.isArray(o.groups)?o.groups:[]).forEach(function(x){if(x&&typeof x==='object'&&x.id&&x.attach)rawAtt[x.id]=x.attach;});
   o.groups=res(o.groups,'size');
+  o.groups.forEach(function(g){
+    var a=rawAtt[g.id];
+    if(a&&a!==g.id&&o.groups.some(function(x){return x.id===a;}))g.attach=a;
+  });
+  o.groups.forEach(function(g){if(g.attach){var t=o.groups.filter(function(x){return x.id===g.attach;})[0];if(t&&t.attach===g.id)delete g.attach;}});
   o.teachers=res(o.teachers,'');
   o.rooms=res(o.rooms,'cap');
   var langs=Array.isArray(o.languages)?o.languages:[];
@@ -227,6 +254,7 @@ function normalize(o){
       weeks:arr(t.weeks).filter(validDate)};
   });
   o.seeded=!!o.seeded;
+  o.seededRes=!!o.seededRes;
   o.skips=(Array.isArray(o.skips)?o.skips:[]).filter(function(x){return x&&typeof x.tpl==='string'&&validDate(x.monday);}).map(function(x){return {tpl:x.tpl,monday:x.monday};});
   var v=Object.assign(defaultView(),o.view||{});
   v.days=(+v.days===6)?6:5;
@@ -264,7 +292,7 @@ var saveTimer=null,saving=false,started=false;
 // Empreinte des seules données (pas de la semaine ou de la vue affichée)
 function dataFp(o){
   o=o||S;
-  return JSON.stringify([o.semesters,o.current,o.languages,o.groups,o.teachers,o.rooms,o.courses,o.slots,o.template,o.skips,o.seeded,o.view.days,o.view.startH,o.view.endH]);
+  return JSON.stringify([o.semesters,o.current,o.languages,o.groups,o.teachers,o.rooms,o.courses,o.slots,o.template,o.skips,o.seeded,o.seededRes,o.view.days,o.view.startH,o.view.endH]);
 }
 function serialize(){
   var o=JSON.parse(JSON.stringify(S));
@@ -457,9 +485,20 @@ function weekDates(txt,semId,baseDate){
 /* ---------- Conflits et contrôles ---------- */
 function overlap(a,b){return a.date===b.date&&a.start<b.start+b.dur&&b.start<a.start+a.dur;}
 
+function groupOf(id){return S.groups.filter(function(x){return x.id===id;})[0];}
+// Deux groupes sont lies s'ils sont identiques ou si l'un est rattache a l'autre
+function linkedGroups(a,b){
+  if(a===b)return true;
+  var ga=groupOf(a),gb=groupOf(b);
+  return !!((ga&&ga.attach===b)||(gb&&gb.attach===a));
+}
 function shared(a,b){
   var out=[];
-  a.groups.forEach(function(g){if(b.groups.indexOf(g)>=0)out.push('groupe '+nm('groups',g));});
+  a.groups.forEach(function(g){
+    var hit=b.groups.filter(function(x){return linkedGroups(g,x);})[0];
+    if(!hit)return;
+    out.push(hit===g?'groupe '+nm('groups',g):'groupes rattachés '+nm('groups',g)+' et '+nm('groups',hit));
+  });
   a.teachers.forEach(function(t){if(b.teachers.indexOf(t)>=0)out.push('enseignant '+nm('teachers',t));});
   if(a.room&&a.room===b.room)out.push('salle '+nm('rooms',a.room));
   return out;
@@ -521,7 +560,7 @@ function passFilter(s){
   var v=S.view;
   if(v.mode==='all')return true;
   if(!v.id)return false;
-  if(v.mode==='group')return s.groups.indexOf(v.id)>=0;
+  if(v.mode==='group')return s.groups.some(function(g){return linkedGroups(g,v.id);});
   if(v.mode==='teacher')return s.teachers.indexOf(v.id)>=0;
   if(v.mode==='room')return s.room===v.id;
   var c=course(s.course);return !!c&&c.lang===v.id;
@@ -602,7 +641,7 @@ function tplPass(t){
   var v=S.view;
   if(v.mode==='all')return true;
   if(!v.id)return false;
-  if(v.mode==='group')return t.groups.indexOf(v.id)>=0;
+  if(v.mode==='group')return t.groups.some(function(g){return linkedGroups(g,v.id);});
   if(v.mode==='teacher')return t.teachers.indexOf(v.id)>=0;
   if(v.mode==='room')return t.room===v.id;
   var c=course(t.course);return !!c&&c.lang===v.id;
@@ -1521,6 +1560,7 @@ function openEditor(slot,pre){
 /* ---------- Configuration ---------- */
 function removeRes(kind,id,tab){
   S[kind]=S[kind].filter(function(x){return x.id!==id;});
+  if(kind==='groups')S.groups.forEach(function(g){if(g.attach===id)delete g.attach;});
   S.courses.forEach(function(c){
     if(kind==='groups')c.groups=c.groups.filter(function(x){return x!==id;});
     if(kind==='teachers')c.teachers=c.teachers.filter(function(x){return x!==id;});
@@ -1611,6 +1651,20 @@ function resTab(kind,label,field,ph){
       num.addEventListener('change',function(){it[field]=Math.max(0,parseInt(num.value,10)||0);save();renderAll();});
       row.appendChild(num);
     }
+    if(kind==='groups'){
+      var att=h('select',{'aria-label':'Groupe rattaché',title:'Groupe rattaché : les deux groupes partagent les mêmes étudiants (conflits et affichage)'});
+      att.appendChild(h('option',{value:''},'Rattaché à : aucun'));
+      S.groups.forEach(function(o){
+        if(o.id===it.id||o.attach===it.id)return;
+        att.appendChild(h('option',{value:o.id},'Rattaché à : '+o.name));
+      });
+      att.value=it.attach||'';
+      att.addEventListener('change',function(){
+        if(att.value)it.attach=att.value;else delete it.attach;
+        save();renderAll();openConfig('groups');
+      });
+      row.appendChild(att);
+    }
     row.appendChild(h('button',{class:'x',title:'Supprimer',onclick:function(){removeRes(kind,it.id,kind);}},'✕'));
     box.appendChild(row);
   });
@@ -1697,14 +1751,26 @@ function openConfig(tab){
   if(tab==='semester')content=semesterTab();
   else if(tab==='languages')content=languagesTab();
   else if(tab==='groups'){
-    content=resTab('groups','Groupes d\'étudiants. L\'effectif sert à vérifier la capacité des salles. Pour TC3, TC4, TC2A3 et TC2A4, Gr1 est le groupe de niveau le plus fort, jusqu\'à Gr4.','size','Effectif');
+    content=resTab('groups','Groupes d\'étudiants. L\'effectif sert à vérifier la capacité des salles. Pour TC3, TC4, TC2A3 et TC2A4, Gr1 est le groupe de niveau le plus fort, jusqu\'à Gr4. Chaque groupe peut être rattaché à un autre groupe : ils sont alors considérés comme partageant les mêmes étudiants (conflit signalé s\'ils sont placés en même temps, et la séance de l\'un apparaît aussi dans la vue de l\'autre).','size','Effectif');
     content.appendChild(h('div',{class:'rrow'},h('button',{onclick:function(){
       var n=addDefaultGroups();S.seeded=true;save();renderAll();openConfig('groups');
       toast(n?n+' groupe(s) ajouté(s).':'Tous les groupes habituels sont déjà présents.');
     }},'Ajouter les groupes habituels (TC3, TC4, TC2A3, TC2A4 Gr1 à Gr4, M1 GC, M1 GM)')));
   }
-  else if(tab==='teachers')content=resTab('teachers','Enseignants et surveillants.','', '');
-  else if(tab==='rooms')content=resTab('rooms','Salles et amphis. La capacité déclenche une alerte si les groupes placés sont trop nombreux.','cap','Capacité');
+  else if(tab==='teachers'){
+    content=resTab('teachers','Enseignants et surveillants.','', '');
+    content.appendChild(h('div',{class:'rrow'},h('button',{onclick:function(){
+      var n=addDefaultTeachers();S.seededRes=true;save();renderAll();openConfig('teachers');
+      toast(n?n+' enseignant(s) ajouté(s).':'Tous les enseignants habituels sont déjà présents.');
+    }},'Ajouter les enseignants habituels (liste du PDF)')));
+  }
+  else if(tab==='rooms'){
+    content=resTab('rooms','Salles et amphis. La capacité déclenche une alerte si les groupes placés sont trop nombreux.','cap','Capacité');
+    content.appendChild(h('div',{class:'rrow'},h('button',{onclick:function(){
+      var n=addDefaultRooms();S.seededRes=true;save();renderAll();openConfig('rooms');
+      toast(n?n+' salle(s) ajoutée(s).':'Toutes les salles habituelles sont déjà présentes.');
+    }},'Ajouter les salles habituelles (Labos E402 à E410, salles B303 à B010)')));
+  }
   else content=coursesTab();
   openModal(h('div',{class:'modal wide'},
     h('h2',{},'Configuration'),nav,content,
@@ -1935,6 +2001,10 @@ function startApp(){
         var nn=addDefaultGroups();S.seeded=true;save();renderAll();
         toast(nn+' groupes habituels ajoutés (TC3, TC4, TC2A3, TC2A4 Gr1 à Gr4, M1 GC, M1 GM). Modifie-les dans Configuration > Groupes.');
       }
+      if(!S.seededRes&&!S.teachers.length&&!S.rooms.length){
+        var nt=addDefaultTeachers(),nr=addDefaultRooms();S.seededRes=true;save();renderAll();
+        toast(nt+' enseignants et '+nr+' salles ajoutés d\'après ton PDF. Modifie-les dans Configuration.');
+      }else if(!S.seededRes){S.seededRes=true;save();}
       if(!tourSeen())setTimeout(startTour,500);
     }else{
       setInterval(function(){
