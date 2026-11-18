@@ -67,8 +67,10 @@ module.exports = async function handler(req, res) {
     if (action === 'login') {
       const k = ip(req);
       if (blocked(k)) return res.status(429).json({ error: 'Trop de tentatives' });
-      const hash = process.env.ADMIN_HASH;
-      if (!hash || !body.password || !safeEq(sha256(body.password), hash.trim().toLowerCase())) {
+      const hashes = String(process.env.ADMIN_HASH || '').split(/[,\s;]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
+      const given = body.password ? sha256(body.password) : '';
+      const ok = hashes.reduce((acc, hh) => safeEq(given, hh) || acc, false);
+      if (!ok) {
         noteFail(k);
         return res.status(401).json({ error: 'Mot de passe incorrect' });
       }

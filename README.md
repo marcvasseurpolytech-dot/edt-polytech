@@ -6,6 +6,6 @@
 Les données sont stockées dans Vercel Blob (store privé), pas dans git.
 
 Variables d'environnement Vercel :
-- `ADMIN_HASH` : empreinte SHA-256 (hexadécimale) du mot de passe administrateur.
+- `ADMIN_HASH` : empreinte(s) SHA-256 (hexadécimales) des mots de passe administrateur, séparées par des virgules (un mot de passe par personne).
 - `BLOB_READ_WRITE_TOKEN` : ajouté automatiquement quand le store Blob est connecté au projet.
 - `ADMIN_SECRET` (facultatif) : secret de signature des sessions.
