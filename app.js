@@ -527,21 +527,53 @@ function tplDesired(t){
   return t.weeks.filter(function(m,i,a){return a.indexOf(m)===i&&inSemester(addDays(m,t.day),t.sem);}).sort();
 }
 function hasSkip(tid,m){return S.skips.some(function(x){return x.tpl===tid&&x.monday===m;});}
-// Répercute une séance type dans le calendrier : crée, met à jour ou retire les séances non modifiées à la main
-function syncTemplate(t){
+// Répercute une séance type dans le calendrier : crée, met à jour ou retire les séances non modifiées à la main.
+// dry=true : ne modifie rien, renvoie seulement les compteurs.
+function syncTemplate(t,dry){
   var want=tplDesired(t),ex=S.slots.filter(function(x){return x.tpl===t.id;});
+  var st={created:0,updated:0,removed:0,first:''};
   want.forEach(function(m){
-    var cur=ex.filter(function(x){return x.tw===m;})[0],date=addDays(m,t.day);
+    var cur=ex.filter(function(x){return x.tw===m;})[0],date=addDays(m,t.day),f=tplFields(t);
     if(!cur){
-      if(!hasSkip(t.id,m))S.slots.push(Object.assign({id:uid(),tpl:t.id,tw:m,edited:false,date:date},tplFields(t)));
+      if(hasSkip(t.id,m))return;
+      st.created++;if(!st.first||m<st.first)st.first=m;
+      if(!dry)S.slots.push(Object.assign({id:uid(),tpl:t.id,tw:m,edited:false,date:date},f));
     }else if(!cur.edited){
-      Object.assign(cur,tplFields(t),{date:date});
+      var diff=cur.date!==date||cur.course!==f.course||cur.start!==f.start||cur.dur!==f.dur||cur.room!==f.room||
+        JSON.stringify(cur.groups)!==JSON.stringify(f.groups)||JSON.stringify(cur.teachers)!==JSON.stringify(f.teachers);
+      if(diff){st.updated++;if(!st.first||m<st.first)st.first=m;if(!dry)Object.assign(cur,f,{date:date});}
     }
   });
   ex.forEach(function(x){
-    if(want.indexOf(x.tw)<0&&!x.edited)S.slots=S.slots.filter(function(y){return y!==x;});
+    if(want.indexOf(x.tw)<0&&!x.edited){st.removed++;if(!dry)S.slots=S.slots.filter(function(y){return y!==x;});}
   });
-  S.skips=S.skips.filter(function(x){return x.tpl!==t.id||want.indexOf(x.monday)>=0;});
+  if(!dry)S.skips=S.skips.filter(function(x){return x.tpl!==t.id||want.indexOf(x.monday)>=0;});
+  return st;
+}
+function syncStats(dry){
+  var tot={created:0,updated:0,removed:0,first:''};
+  S.template.filter(function(t){return t.sem===S.current;}).forEach(function(t){
+    var r=syncTemplate(t,dry);
+    tot.created+=r.created;tot.updated+=r.updated;tot.removed+=r.removed;
+    if(r.first&&(!tot.first||r.first<tot.first))tot.first=r.first;
+  });
+  return tot;
+}
+function generateWeekly(){
+  var r=syncStats(false);
+  var n=r.created+r.updated+r.removed;
+  save();
+  if(!n){renderAll();toast('Le semainier est déjà à jour.');return;}
+  var parts=[];
+  if(r.created)parts.push(r.created+' séance'+(r.created>1?'s':'')+' créée'+(r.created>1?'s':''));
+  if(r.updated)parts.push(r.updated+' mise'+(r.updated>1?'s':'')+' à jour');
+  if(r.removed)parts.push(r.removed+' retirée'+(r.removed>1?'s':''));
+  typeView=false;
+  try{history.replaceState(null,'',location.pathname+location.hash);}catch(e){}
+  if(r.first)S.view.week=mondayOf(r.first);
+  fixWeek(S);
+  renderAll();
+  toast('Semainier généré : '+parts.join(', ')+'.');
 }
 function dropTemplate(t){
   S.slots=S.slots.filter(function(x){return !(x.tpl===t.id&&!x.edited);});
@@ -688,12 +720,11 @@ function openTplEditor(t,pre){
     var rec=t||{id:uid()};
     Object.assign(rec,{sem:d.sem,course:d.course,groups:d.groups.slice(),teachers:d.teachers.slice(),room:d.room||'',day:d.day,start:d.start,dur:d.end-d.start,weeks:pw.mondays.slice().sort()});
     if(isNew)S.template.push(rec);
-    syncTemplate(rec);
     save();closeModal();renderAll();
-    toast('Semaine type enregistrée : '+want.length+' séance(s) dans le calendrier.');
+    toast('Séance type enregistrée. Clique sur « Générer le semainier » pour la répercuter dans le calendrier.');
   }
   function doDel(){
-    confirmBox('Supprimer cette séance type ? Les séances du calendrier qui en viennent et n\'ont pas été modifiées à la main seront supprimées (elles redeviennent à placer).',function(){
+    confirmBox('Supprimer cette séance type ? Tout de suite, les séances du calendrier qui en viennent et n\'ont pas été modifiées à la main seront aussi supprimées (elles redeviennent à placer).',function(){
       dropTemplate(t);save();closeModal();renderAll();toast('Séance type supprimée');
     },'Supprimer');
   }
@@ -704,7 +735,7 @@ function openTplEditor(t,pre){
   actions.appendChild(h('button',{class:'primary',onclick:doSave},'Enregistrer'));
   openModal(h('div',{class:'modal'},
     h('h2',{},isNew?'Nouvelle séance type':'Modifier la séance type'),
-    h('p',{class:'hint'},'Ce que tu règles ici se répercute dans le calendrier, semaine par semaine. Les séances déplacées ou modifiées à la main dans le calendrier ne sont pas touchées.'),
+    h('p',{class:'hint'},'Ce que tu règles ici est répercuté dans le calendrier quand tu cliques sur « Générer le semainier ». Les séances déplacées ou modifiées à la main dans le calendrier ne sont jamais touchées.'),
     h('div',{class:'f'},h('label',{},'Cours'),courseSel,info),
     h('div',{class:'row2'},
       h('div',{class:'f'},h('label',{},'Jour'),daySel),
@@ -721,6 +752,16 @@ function openTplEditor(t,pre){
 function renderTypeWeek(){
   var root=$('#tt');root.replaceChildren();
   var sm=SEM(),agg=typeBlocks();
+  if(CAN_EDIT){
+    var pd0=syncStats(true),pn=pd0.created+pd0.updated+pd0.removed;
+    var bar=h('div',{class:'tw-gen'+(pn?' todo':'')},
+      h('span',{},S.template.some(function(t){return t.sem===S.current;})
+        ?(pn?pn+' changement'+(pn>1?'s':'')+' à répercuter dans le semainier ('+pd0.created+' à créer, '+pd0.updated+' à mettre à jour, '+pd0.removed+' à retirer).':'Le semainier est à jour avec la semaine type.')
+        :'Commence par ajouter des séances type, puis génère le semainier.'),
+      h('span',{class:'sp'}),
+      h('button',{class:'primary',onclick:generateWeekly,disabled:!pn},'Générer le semainier'));
+    root.appendChild(bar);
+  }
   if(!agg.length){
     var em=h('div',{class:'empty'},S.template.some(function(t){return t.sem===S.current;})?'Aucune séance type pour cette sélection.':'La semaine type de ce semestre est vide.');
     if(CAN_EDIT){
@@ -1735,18 +1776,19 @@ function openExport(){
 /* ---------- Tutoriel guidé ---------- */
 var TOUR_KEY='edt-tour-v1';
 var TOUR=[
-  {sel:null,t:'Bienvenue Chef Bichette',p:'Cette appli sert à construire les emplois du temps d\'un semestre : tu définis tes cours avec leur nombre de séances, puis tu les places semaine par semaine. Tu pars d\'un emploi du temps vierge. Un tour rapide ?'},
-  {sel:'#sem',t:'1. Choisis le semestre',p:'De S5 à S10. Chaque semestre a ses propres cours et séances, et ses dates de début et de fin.'},
-  {sel:'.top .wk',t:'2. Navigue par semaine',p:'Les flèches changent de semaine. Le numéro affiché est le numéro de semaine ISO (48, 49, 53...), comme dans ton calendrier. Tu peux aussi sauter à une date précise.'},
-  {sel:'#cfg',t:'3. Commence par la configuration',p:'Tu y règles les semestres (dates), les langues (Anglais, Allemand, Espagnol, FLE, Autre, avec leurs couleurs), les groupes (effectifs), les enseignants, les salles (capacités) et les cours. Pour chaque cours, tu indiques son nombre de séances : il est propre à chaque cours.'},
-  {sel:'#courses',t:'4. Les séances à placer',p:'Chaque cours affiche un compteur, par exemple 5/12 : séances placées sur séances prévues. Clique sur un cours pour passer en mode placement, ou fais-le glisser vers la grille.'},
-  {sel:'#tt',t:'5. Place les séances',p:'Pour une séance isolée ou un rattrapage, passe par le calendrier. En mode placement, clique dans la grille : le jour et l\'heure sont ceux de ton clic (2 h par défaut). Dans la barre jaune, tape les semaines, par exemple 48-50 53, pour créer d\'un coup toutes les séances d\'un cours le lundi à 8 h. Le compteur descend à chaque séance et l\'appli refuse d\'en placer plus que prévu.'},
-  {sel:'#tt',t:'6. Ajuste une séance',p:'Clique sur une séance pour la modifier, la dupliquer ou la supprimer. Glisse-la pour changer le jour ou l\'heure, tire sa base pour changer la durée. Une séance supprimée repart dans les séances à placer.'},
-  {sel:'#wtype',t:'7. La semaine type',p:'Ce bouton affiche la semaine type : un tableau par jour, une colonne par salle, avec le groupe, la langue, l\'enseignant et les semaines de chaque cours. C\'est là que tu construis l\'emploi du temps de base : clique dans une colonne (ou sur « + Séance »), choisis le cours, le jour, l\'heure et les semaines. Chaque séance type est répercutée automatiquement dans le calendrier, semaine par semaine. L\'inverse n\'est pas vrai : si tu annules, déplaces ou modifies une séance dans le calendrier, la semaine type ne bouge pas, et une séance annulée repart dans les séances à placer pour être reprogrammée ailleurs. Dans le calendrier, « Rétablir selon la semaine type » annule une modification manuelle.'},
-  {sel:'#conf',t:'8. Le contrôle',p:'L\'appli vérifie en continu : groupe, enseignant ou salle en double, salle trop petite, séance hors semestre, trop de séances pour un cours. Les séances concernées sont cerclées de rouge ; clique sur une ligne pour la corriger.'},
-  {sel:'#mode',t:'9. Filtre la vue',p:'Affiche tout, ou seulement un groupe, un enseignant, une salle ou une langue : pratique pour vérifier ou imprimer un emploi du temps individuel.'},
-  {sel:'#exp',t:'10. Sauvegarde',p:'Tout s\'enregistre automatiquement sur le serveur : le voyant « Enregistré » en haut le confirme, sans aucun redéploiement. La vue utilisateur (adresse sans /admin) est en lecture seule et se met à jour toute seule pour la projection. Export / Import permet de garder une copie JSON et de récupérer des CSV pour Excel.'},
-  {sel:null,t:'C\'est parti',p:'Tu peux relancer ce tutoriel à tout moment avec le bouton « Tutoriel ». Commence par Configuration pour saisir tes cours et leur nombre de séances.'}
+  {sel:null,t:'Bienvenue Chef Bichette',p:'Cette appli construit les emplois du temps d\'un semestre en deux temps : tu définis d\'abord la semaine type (qui fait quoi, quel jour, à quelle heure, quelles semaines), puis tu cliques sur « Générer le semainier » pour en tirer le calendrier semaine par semaine. Tu pars d\'un emploi du temps vierge. Un tour rapide ?'},
+  {sel:'#sem',t:'1. Choisis le semestre',p:'De S5 à S10. Chaque semestre a ses propres cours, sa semaine type et son semainier, avec ses dates de début et de fin.'},
+  {sel:'#cfg',t:'2. Commence par la configuration',p:'Tu y règles les semestres (dates), les langues (Anglais, Allemand, Espagnol, FLE, Autre, avec leurs couleurs), les groupes (effectifs), les enseignants, les salles (capacités) et les cours. Pour chaque cours, tu indiques son nombre de séances : il est propre à chaque cours.',view:'type'},
+  {sel:'#wtype',t:'3. Construis la semaine type',p:'Ce bouton bascule entre la semaine type et le calendrier. Ici, la semaine type : un tableau par jour, une colonne par salle, avec le groupe, la langue, l\'enseignant et les semaines de chaque cours.',view:'type'},
+  {sel:'#tt',t:'4. Ajoute les séances type',p:'Clique dans une colonne (ou sur « + Séance ») : choisis le cours, le jour, l\'heure, puis les semaines, par exemple 48-50 53, S37 à S42, ou de telle date à telle date. Les groupes, enseignants et salle viennent du cours et restent modifiables. Le compteur du cours t\'empêche de dépasser son nombre de séances, et les conflits sont signalés.',view:'type'},
+  {sel:'.tw-gen',t:'5. Génère le semainier',p:'Quand ta semaine type est prête, clique sur « Générer le semainier ». Chaque séance type devient une séance dans le calendrier, pour chacune de ses semaines. Le compteur te dit combien de changements restent à répercuter : tu peux modifier la semaine type puis régénérer à tout moment.',view:'type'},
+  {sel:'.top .wk',t:'6. Parcours le semainier',p:'Tu es maintenant dans le calendrier. Les flèches changent de semaine ; le numéro est celui de la semaine ISO (48, 49, 53...). Tu peux aussi sauter à une date précise.',view:'cal'},
+  {sel:'#tt',t:'7. Ajuste une semaine sans toucher à la semaine type',p:'Clique sur une séance pour la modifier, la dupliquer ou l\'annuler ; glisse-la pour changer le jour ou l\'heure. Ces changements ne touchent jamais la semaine type, et une régénération ne les écrase pas. « Rétablir selon la semaine type » annule une modification manuelle.',view:'cal'},
+  {sel:'#courses',t:'8. Reprogramme une séance annulée',p:'Une séance annulée repart dans les séances à placer : le compteur du cours (par exemple 11/12) te montre ce qui manque. Clique sur le cours, puis dans la grille pour la replacer à un autre créneau, ou fais-le glisser depuis la liste.',view:'cal'},
+  {sel:'#conf',t:'9. Le contrôle',p:'L\'appli vérifie en continu : groupe, enseignant ou salle en double, salle trop petite, séance hors semestre, trop de séances pour un cours. Les séances concernées sont cerclées de rouge ; clique sur une ligne pour la corriger.',view:'cal'},
+  {sel:'#mode',t:'10. Filtre la vue',p:'Affiche tout, ou seulement un groupe, un enseignant, une salle ou une langue, dans la semaine type comme dans le calendrier : pratique pour vérifier ou imprimer un emploi du temps individuel.',view:'cal'},
+  {sel:'#exp',t:'11. Sauvegarde et projection',p:'Tout s\'enregistre automatiquement sur le serveur : le voyant « Enregistré » en haut le confirme, sans aucun redéploiement. La vue utilisateur (adresse sans /admin) est en lecture seule et se met à jour toute seule pour la projection ; ajoute ?vue=type à l\'adresse pour projeter la semaine type. Export / Import permet de garder une copie JSON et de récupérer des CSV pour Excel.',view:'cal'},
+  {sel:null,t:'C\'est parti',p:'Tu peux relancer ce tutoriel à tout moment avec le bouton « Tutoriel ». Commence par Configuration pour saisir tes cours et leur nombre de séances, puis construis la semaine type et génère le semainier.',view:'type'}
 ];
 var tourIdx=-1;
 
@@ -1784,6 +1826,7 @@ function startTour(){
 }
 function showStep(){
   var st=TOUR[tourIdx],card=$('.tour-card'),last=tourIdx===TOUR.length-1;
+  if(st.view){var wantType=(st.view==='type');if(wantType!==typeView){typeView=wantType;renderAll();}}
   card.replaceChildren(
     h('h3',{},st.t),
     h('p',{},st.p),
