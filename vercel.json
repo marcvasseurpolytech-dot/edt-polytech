@@ -1,0 +1,5 @@
+{
+  "functions": { "api/*.js": { "maxDuration": 15 } },
+  "regions": ["cdg1"],
+  "rewrites": [{ "source": "/admin", "destination": "/index.html" }]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "edt-polytech",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Emplois du temps des langues (vue utilisateur et vue administrateur)",
+  "dependencies": {
+    "@vercel/blob": "^2.9.0"
+  }
+}
