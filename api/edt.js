@@ -50,11 +50,59 @@ async function streamText(stream) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+const VAC_URL = 'https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records';
+const parisDay = (v) => {
+  const s = String(v || '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  if (isNaN(d)) return '';
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+};
+async function queryVac(where) {
+  const url = VAC_URL + '?limit=100&order_by=' + encodeURIComponent('start_date desc') + '&where=' + encodeURIComponent(where);
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const r = await fetch(url, { signal: ctl.signal, headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error('http ' + r.status);
+    const j = await r.json();
+    return Array.isArray(j.results) ? j.results : [];
+  } finally { clearTimeout(t); }
+}
+// Vacances scolaires zone B (academie de Lille), normalisees : [{name,start,end}] (dates Paris, AAAA-MM-JJ)
+async function vacances() {
+  let rows = [];
+  try { rows = await queryVac('location="Lille"'); } catch (e) { rows = []; }
+  if (!rows.length) rows = await queryVac('zones="Zone B"');
+  const seen = new Set(), list = [];
+  rows.forEach(r => {
+    const name = String(r.description || '').trim();
+    if (!/^(vacances|pont)/i.test(name)) return;
+    if (/enseignants/i.test(String(r.population || ''))) return;
+    const start = parisDay(r.start_date), end = parisDay(r.end_date);
+    if (!start || !end || end <= start) return;
+    const key = start + '|' + end;
+    if (seen.has(key)) return;
+    seen.add(key);
+    list.push({ name: name.replace(/^vacances d'/i, 'Vacances d\'').replace(/^vacances de /i, 'Vacances de '), start, end });
+  });
+  list.sort((x, y) => x.start < y.start ? -1 : 1);
+  return list;
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const action = (req.query && req.query.action) || '';
   try {
     if (req.method === 'GET') {
+      if (action === 'vacances') {
+        try {
+          const list = await vacances();
+          if (!list.length) return res.status(502).json({ error: 'Calendrier indisponible' });
+          res.setHeader('Cache-Control', 'public, s-maxage=43200, stale-while-revalidate=604800');
+          return res.status(200).json({ list, zone: 'B', academie: 'Lille', at: Date.now() });
+        } catch (e) { return res.status(502).json({ error: 'Calendrier indisponible' }); }
+      }
       if (action === 'ping') return res.status(isAdmin(req) ? 200 : 401).json({ ok: isAdmin(req) });
       const r = await get(PATH, { access: 'private', useCache: false });
       if (!r || r.statusCode === 404 || !r.stream) return res.status(200).json({ data: null, rev: null });

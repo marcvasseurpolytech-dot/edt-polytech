@@ -37,6 +37,51 @@ function wd(s){return (pd(s).getDay()+6)%7;}          // 0 = lundi ... 6 = diman
 function mondayOf(s){return addDays(s,-wd(s));}
 function shortDate(s){var p=s.split('-');return p[2]+'/'+p[1];}
 function longDate(s){return DAYS[wd(s)]||'Dim.';}
+/* ---------- Jours feries (calcules) et vacances scolaires zone B (Lille) ---------- */
+var VAC=[],vacInfo={ok:false,at:0},FERC={};
+function easterOf(y){
+  var a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3);
+  var hh=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-hh-k)%7,m=Math.floor((a+11*hh+22*l)/451);
+  var mo=Math.floor((hh+l-7*m+114)/31),da=((hh+l-7*m+114)%31)+1;
+  return y+'-'+pad(mo)+'-'+pad(da);
+}
+function feriesOfYear(y){
+  if(FERC[y])return FERC[y];
+  var e=easterOf(y),o={};
+  o[y+'-01-01']='Jour de l\'An';o[addDays(e,1)]='Lundi de Pâques';o[y+'-05-01']='Fête du Travail';o[y+'-05-08']='Victoire 1945';
+  o[addDays(e,39)]='Ascension';o[addDays(e,50)]='Lundi de Pentecôte';o[y+'-07-14']='Fête nationale';o[y+'-08-15']='Assomption';
+  o[y+'-11-01']='Toussaint';o[y+'-11-11']='Armistice 1918';o[y+'-12-25']='Noël';
+  FERC[y]=o;return o;
+}
+// Renvoie le nom du jour ferie (seulement du lundi au vendredi), sinon ''
+function ferie(date){return wd(date)<5?(feriesOfYear(+date.slice(0,4))[date]||''):'';}
+// Le depart en vacances a lieu apres la classe du jour de debut ; la reprise est le matin du jour de fin
+function vacation(date){
+  if(wd(date)>=5)return '';
+  for(var i=0;i<VAC.length;i++)if(date>VAC[i].start&&date<VAC[i].end)return VAC[i].name;
+  return '';
+}
+function dayFlag(date){var f=ferie(date);if(f)return {kind:'ferie',name:f};var v=vacation(date);return v?{kind:'vac',name:v}:null;}
+function weekFlag(monday){
+  var nv=0,vn='',fl=[],i,d;
+  for(i=0;i<5;i++){d=addDays(monday,i);var v=vacation(d),f=ferie(d);if(v){nv++;vn=v;}if(f)fl.push(f+' ('+shortDate(d)+')');}
+  if(nv===5)return {cls:' vac',tip:vn+' (zone B)'};
+  if(nv||fl.length)return {cls:' hol',tip:[nv?nv+' jour(s) de '+vn:'',fl.length?'Férié : '+fl.join(', '):''].filter(Boolean).join(' · ')};
+  return {cls:'',tip:''};
+}
+function loadVacances(cb){
+  var c=null;
+  try{c=JSON.parse(localStorage.getItem('edtVac')||'null');}catch(e){}
+  if(c&&Array.isArray(c.list)){VAC=c.list;vacInfo={ok:true,at:c.at||0};}
+  if(c&&c.at&&Date.now()-c.at<12*3600*1000){if(cb)cb();return;}
+  fetch(API+'?action=vacances').then(function(r){return r.ok?r.json():Promise.reject(new Error('http'));}).then(function(j){
+    if(j&&Array.isArray(j.list)&&j.list.length){
+      VAC=j.list;vacInfo={ok:true,at:Date.now()};
+      try{localStorage.setItem('edtVac',JSON.stringify({at:vacInfo.at,list:VAC}));}catch(e){}
+      if(cb)cb();
+    }
+  }).catch(function(){});
+}
 function fullDate(s){var d=pd(s);return d.getDate()+' '+MONTHS[d.getMonth()]+' '+d.getFullYear();}
 function todayStr(){return ds(new Date());}
 function isoWeek(s){
@@ -531,6 +576,9 @@ function allIssues(){
     var c=capacityIssue(a);
     if(c){out.push({kind:'capacite',a:a,b:null,
       text:'['+semName(a.sem)+'] '+longDate(a.date)+' '+shortDate(a.date)+' '+fmt(a.start)+' : '+c.total+' étudiants prévus pour '+c.cap+' places en '+c.room+' ("'+titleOf(a)+'")'});}
+    var fg=dayFlag(a.date);
+    if(fg){out.push({kind:fg.kind==='ferie'?'ferie':'vacances',a:a,b:null,
+      text:'['+semName(a.sem)+'] '+longDate(a.date)+' '+shortDate(a.date)+' : "'+titleOf(a)+'" tombe '+(fg.kind==='ferie'?'un jour férié ('+fg.name+')':'pendant les vacances scolaires ('+fg.name+')')});}
     if(!inSemester(a.date,a.sem)){out.push({kind:'hors',a:a,b:null,
       text:'['+semName(a.sem)+'] '+longDate(a.date)+' '+shortDate(a.date)+' : "'+titleOf(a)+'" est en dehors du semestre'});}
   });
@@ -551,6 +599,7 @@ function draftIssues(d){
   });
   var c=capacityIssue(d);
   if(c)msgs.push(c.total+' étudiants pour '+c.cap+' places en '+c.room);
+  if(validDate(d.date)){var fg=dayFlag(d.date);if(fg)msgs.push(fg.kind==='ferie'?'Jour férié : '+fg.name:'Vacances scolaires (zone B) : '+fg.name);}
   if(validDate(d.date)&&!inSemester(d.date,d.sem)){var ms=semOf(d.sem)||SEM();msgs.push('Date en dehors du semestre '+ms.name+' ('+fullDate(ms.start)+' au '+fullDate(ms.end)+')');}
   return msgs;
 }
@@ -758,7 +807,8 @@ function openTplEditor(t,pre){
     var sel=weeksNow();
     semWeeks(d.sem).forEach(function(w){
       var on=sel.indexOf(w.monday)>=0;
-      var b=h('button',{type:'button',class:'wk'+(on?' on':''),title:'Semaine '+w.num+' : lundi '+shortDate(w.monday)},String(w.num));
+      var wf=weekFlag(w.monday);
+      var b=h('button',{type:'button',class:'wk'+(on?' on':'')+wf.cls,title:'Semaine '+w.num+' : lundi '+shortDate(w.monday)+(wf.tip?' · '+wf.tip:'')},String(w.num));
       b.addEventListener('click',function(){
         var cur=weeksNow(),i=cur.indexOf(w.monday);
         if(i>=0)cur.splice(i,1);else cur.push(w.monday);
@@ -963,7 +1013,7 @@ function renderGrid(){
   var v=S.view,n=v.days,t0=v.startH*60,t1=v.endH*60,H=Math.round((t1-t0)*PPM);
   var issues=CAN_EDIT?allIssues():[],bad={};
   issues.forEach(function(i){
-    if(i.kind==='trop')return;
+    if(i.kind==='trop'||i.kind==='ferie'||i.kind==='vacances')return;
     if(i.a)bad[i.a.id]=true;
     if(i.b)bad[i.b.id]=true;
   });
@@ -975,7 +1025,8 @@ function renderGrid(){
   var i;
   for(i=0;i<n;i++){
     var dt=addDays(v.week,i);
-    heads.appendChild(h('div',{class:'dh'+(inSemester(dt)?'':' off')},DAYS[i],h('small',{},shortDate(dt))));
+    var fl=dayFlag(dt);
+    heads.appendChild(h('div',{class:'dh'+(inSemester(dt)?'':' off')+(fl?' '+fl.kind:''),title:fl?(fl.kind==='ferie'?'Jour férié : ':'Vacances scolaires (zone B) : ')+fl.name:''},DAYS[i],h('small',{},shortDate(dt)),fl?h('em',{class:'fl'},fl.kind==='ferie'?'Férié : '+fl.name:fl.name):null));
   }
 
   var body=h('div',{class:'body',style:'grid-template-columns:'+tpl+';height:'+H+'px;--hh:'+(60*PPM)+'px'});
@@ -993,7 +1044,8 @@ function renderGrid(){
 
   byDay.forEach(function(list,day){
     var date=addDays(v.week,day);
-    var col=h('div',{class:'col'+(inSemester(date)?'':' off'),style:'height:'+H+'px'});
+    var cf=dayFlag(date);
+    var col=h('div',{class:'col'+(inSemester(date)?'':' off')+(cf?' '+cf.kind:''),style:'height:'+H+'px'});
     col.addEventListener('click',function(e){
       if(!CAN_EDIT||e.target!==col||justDragged)return;
       if(!inSemester(date)){toast('Cette date est en dehors du semestre');return;}
@@ -1151,7 +1203,7 @@ function renderIssues(issues){
   var c=$('#conf');c.replaceChildren();
   var nb=issues.length;
   c.appendChild(h('h2',{},'Contrôle',h('span',{class:'badge'+(nb?'':' ok')},nb?String(nb):'OK')));
-  if(!nb){c.appendChild(h('div',{class:'hint'},'Aucun conflit de groupe, d\'enseignant ou de salle, aucune salle trop petite, aucune séance hors semestre.'));return;}
+  if(!nb){c.appendChild(h('div',{class:'hint'},'Aucun conflit de groupe, d\'enseignant ou de salle, aucune salle trop petite, aucune séance hors semestre, aucune séance un jour férié ou pendant les vacances.'));return;}
   var ul=h('ul',{class:'issues'});
   issues.forEach(function(i){
     ul.appendChild(h('li',{class:(i.kind==='conflit'||i.kind==='trop')?'':'w',onclick:function(){
@@ -1445,7 +1497,8 @@ function openEditor(slot,pre){
     var sel=parseWeeks(d.weeksTxt,d.sem).mondays;
     semWeeks(d.sem).forEach(function(w){
       var on=sel.indexOf(w.monday)>=0;
-      var b=h('button',{type:'button',class:'wk'+(on?' on':''),title:'Semaine '+w.num+' : lundi '+shortDate(w.monday)},String(w.num));
+      var wf=weekFlag(w.monday);
+      var b=h('button',{type:'button',class:'wk'+(on?' on':'')+wf.cls,title:'Semaine '+w.num+' : lundi '+shortDate(w.monday)+(wf.tip?' · '+wf.tip:'')},String(w.num));
       b.addEventListener('click',function(){
         var cur=parseWeeks(d.weeksTxt,d.sem).mondays,i=cur.indexOf(w.monday);
         if(i>=0)cur.splice(i,1);else cur.push(w.monday);
@@ -1636,6 +1689,27 @@ function semesterTab(){
   box.appendChild(h('div',{class:'row3',style:'margin-top:16px'},
     h('div',{class:'f'},h('label',{},'Jours affichés'),days),
     h('div',{class:'f'},h('label',{},'Plage horaire de la grille'),h('div',{class:'rrow'},sh,'à',eh))));
+  box.appendChild(holidayBox());
+  return box;
+}
+
+function holidayBox(){
+  var m=SEM(),box=h('div',{class:'holbox'});
+  box.appendChild(h('h3',{},'Jours fériés et vacances (zone B, Lille) · '+m.name));
+  var rows=[],d=m.start,guard=0;
+  while(d<=m.end&&guard++<800){var f=ferie(d);if(f)rows.push({k:d,t:longDate(d)+' '+fullDate(d)+' : '+f+' (férié)'});d=addDays(d,1);}
+  VAC.forEach(function(v){
+    if(v.end<=m.start||v.start>=m.end)return;
+    rows.push({k:v.start,t:v.name+' : du '+fullDate(v.start)+' au '+fullDate(addDays(v.end,-1))+' (reprise le '+fullDate(v.end)+')'});
+  });
+  rows.sort(function(x,y){return x.k<y.k?-1:x.k>y.k?1:0;});
+  box.appendChild(h('p',{class:'hint'},vacInfo.ok
+    ?'Les jours fériés sont calculés pour chaque année. Les vacances viennent du calendrier officiel de l\'Éducation nationale et se mettent à jour toutes seules (dernière actualisation : '+new Date(vacInfo.at).toLocaleDateString('fr-FR')+'). Ils sont signalés dans la grille et dans Contrôle.'
+    :'Les jours fériés sont calculés pour chaque année. Les vacances scolaires n\'ont pas pu être chargées pour l\'instant : elles se rechargent automatiquement.'));
+  var ul=h('ul',{class:'issues'});
+  rows.forEach(function(r){ul.appendChild(h('li',{class:'w'},r.t));});
+  if(!rows.length)ul.appendChild(h('li',{},'Rien à signaler sur la période du semestre.'));
+  box.appendChild(ul);
   return box;
 }
 
@@ -1995,6 +2069,7 @@ function startApp(){
     applyRemote(j,false);
     started=true;
     renderAll();
+    loadVacances(function(){renderAll();});
     if(CAN_EDIT){
       setStatus('ok','Enregistré');
       if(!S.groups.length&&!S.seeded){

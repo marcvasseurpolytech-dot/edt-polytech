@@ -144,3 +144,15 @@ textarea{width:100%;min-height:200px;border:1px solid var(--line);border-radius:
   #tt{border:none;overflow:visible}
   .ev{box-shadow:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
+
+/* jours feries et vacances */
+.dh.ferie{background:#fff4e0;color:#9a4d00}
+.dh.vac{background:#e8f0fb;color:#1e4a8a}
+.dh .fl{display:block;font-style:normal;font-weight:600;font-size:11px;line-height:1.2;margin-top:2px}
+.col.ferie{background-color:#fff9ee}
+.col.vac{background-color:#f1f6fd}
+.chips button.wk.vac{background:#dbe8fa;border-color:#9bbbe8}
+.chips button.wk.hol{background:#ffe9c7;border-color:#e8b45e}
+.chips button.wk.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.holbox{margin-top:18px;border-top:1px solid var(--line);padding-top:10px}
+.holbox h3{margin:0 0 6px;font-size:14px}
