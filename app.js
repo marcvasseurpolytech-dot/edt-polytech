@@ -657,6 +657,19 @@ function openTplEditor(t,pre){
     if(msgs.length){warn.className='warnbox';msgs.forEach(function(m){warn.appendChild(h('div',{},'⚠ '+m));});}
     else{warn.className='warnbox okbox';warn.appendChild(h('div',{},'Aucun conflit.'));}
   }
+  var semField;
+  if(isNew){
+    var semSel=h('select',{});
+    S.semesters.forEach(function(m){semSel.appendChild(h('option',{value:m.id},m.name));});
+    semSel.value=d.sem;
+    semSel.addEventListener('change',function(){
+      d.sem=semSel.value;d.course='';d.groups=[];d.teachers=[];d.room='';d.weeks=[];d.weeksTxt='';
+      openTplEditor(null,d);
+    });
+    semField=h('div',{class:'f'},h('label',{},'Semestre (S5, S6, S7...)'),semSel);
+  }else{
+    semField=h('div',{class:'f'},h('label',{},'Semestre'),h('div',{},semName(d.sem)));
+  }
   var courseSel=h('select',{},h('option',{value:''},'Choisis un cours'));
   S.courses.filter(function(c){return c.sem===d.sem;}).forEach(function(c){
     courseSel.appendChild(h('option',{value:c.id},c.name+' ('+placed(c.id)+'/'+c.sessions+')'));
@@ -720,6 +733,7 @@ function openTplEditor(t,pre){
     var rec=t||{id:uid()};
     Object.assign(rec,{sem:d.sem,course:d.course,groups:d.groups.slice(),teachers:d.teachers.slice(),room:d.room||'',day:d.day,start:d.start,dur:d.end-d.start,weeks:pw.mondays.slice().sort()});
     if(isNew)S.template.push(rec);
+    if(rec.sem!==S.current){S.current=rec.sem;S.view.week=mondayOf(SEM().start);armed=null;fixWeek(S);}
     save();closeModal();renderAll();
     toast('Séance type enregistrée. Clique sur « Générer le semainier » pour la répercuter dans le calendrier.');
   }
@@ -736,6 +750,7 @@ function openTplEditor(t,pre){
   openModal(h('div',{class:'modal'},
     h('h2',{},isNew?'Nouvelle séance type':'Modifier la séance type'),
     h('p',{class:'hint'},'Ce que tu règles ici est répercuté dans le calendrier quand tu cliques sur « Générer le semainier ». Les séances déplacées ou modifiées à la main dans le calendrier ne sont jamais touchées.'),
+    semField,
     h('div',{class:'f'},h('label',{},'Cours'),courseSel,info),
     h('div',{class:'row2'},
       h('div',{class:'f'},h('label',{},'Jour'),daySel),
@@ -752,6 +767,12 @@ function openTplEditor(t,pre){
 function renderTypeWeek(){
   var root=$('#tt');root.replaceChildren();
   var sm=SEM(),agg=typeBlocks();
+  var semSelT=h('select',{'aria-label':'Semestre de la semaine type'});
+  S.semesters.forEach(function(m){semSelT.appendChild(h('option',{value:m.id},m.name));});
+  semSelT.value=sm.id;
+  semSelT.addEventListener('change',function(){switchSemester(semSelT.value);});
+  root.appendChild(h('div',{class:'tw-sem'},h('label',{},'Semaine type du semestre ',semSelT),
+    h('span',{class:'hint'},'du '+fullDate(sm.start)+' au '+fullDate(sm.end))));
   if(CAN_EDIT){
     var pd0=syncStats(true),pn=pd0.created+pd0.updated+pd0.removed;
     var bar=h('div',{class:'tw-gen'+(pn?' todo':'')},

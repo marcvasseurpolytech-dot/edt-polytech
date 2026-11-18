@@ -118,6 +118,8 @@ textarea{width:100%;min-height:200px;border:1px solid var(--line);border-radius:
 .login-err{color:#b91c1c;font-size:13px;min-height:18px}
 .fatal{padding:40px;text-align:center;color:#b91c1c}
 .typeweek .top .wk{display:none}
+.tw-sem{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-weight:600}
+.tw-sem select{font-weight:600}
 .tw-gen{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#f3f4f6;border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin-bottom:14px;font-size:13px}
 .tw-gen.todo{background:#fff7e0;border-color:#f0d58a}
 .tw-gen .sp{flex:1}
@@ -133,6 +135,7 @@ textarea{width:100%;min-height:200px;border:1px solid var(--line);border-radius:
 .tw-legend span{padding:2px 10px;border-radius:6px;font-size:12px;font-weight:600}
 @media print{
   .tw-gen{display:none!important}
+  .tw-sem select{border:none;appearance:none;-webkit-appearance:none}
   .tw-day{page-break-after:always}
   #adminlink,#fs,#savestate{display:none!important}
   @page{size:landscape;margin:10mm}
