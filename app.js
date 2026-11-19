@@ -465,6 +465,11 @@ function nm(kind,id){var x=S[kind].filter(function(i){return i.id===id;})[0];ret
 function course(id){return id?S.courses.filter(function(c){return c.id===id;})[0]||null:null;}
 function lang(id){return id?S.languages.filter(function(l){return l.id===id;})[0]||null:null;}
 function placed(cid){return S.slots.filter(function(s){return s.course===cid;}).length;}
+function placedPlan(cid,exceptTpl){
+  var n=S.slots.filter(function(x){return x.course===cid&&!x.tpl;}).length;
+  S.template.forEach(function(t){if(t.course===cid&&t.id!==exceptTpl)n+=tplDesired(t).length;});
+  return n;
+}
 function remaining(c){return c.sessions-placed(c.id);}
 function titleOf(s){var c=course(s.course),l=(!c&&s.lang)?lang(s.lang):null;return c?c.name:(l?l.name:(s.title||'Sans titre'));}
 function slotLang(s){var c=course(s.course);return c?lang(c.lang):(s.lang?lang(s.lang):null);}
@@ -725,8 +730,13 @@ function newBlank(day,room,start,extra){
 }
 function tplPreFromCourse(c,day,room,start){
   var dur=c?c.dur:120;
+  var wk=[];
+  if(c){
+    var left=Math.max(0,c.sessions-placedPlan(c.id,null)),t0=todayStr();
+    wk=semWeeks(SEM().id).map(function(w){return w.monday;}).filter(function(m){var dt=addDays(m,day);return dt>=t0&&!ferie(dt)&&!vacation(dt);}).slice(0,left);
+  }
   return {id:null,sem:SEM().id,course:c?c.id:'',groups:c?c.groups.slice():[],teachers:c?c.teachers.slice():[],
-    room:room||(c?c.room||'':''),day:day,start:start,end:Math.min(1440,start+dur),dur:dur,weeks:[]};
+    room:room||(c?c.room||'':''),day:day,start:start,end:Math.min(1440,start+dur),dur:dur,weeks:wk};
 }
 function afterTplChange(t,msg){
   save();renderAll();
@@ -842,7 +852,7 @@ function renderRoomBar(){
   card.hidden=!on;
   if(!on)return;
   card.appendChild(h('h2',{},'Blocs à glisser'));
-  card.appendChild(h('p',{class:'hint'},'Glisse une spécialité dans la grille (jour, heure, salle), puis un enseignant, puis une salle sur le bloc, dans l\'ordre que tu veux. Un bloc dure 2 h.'));
+  card.appendChild(h('p',{class:'hint'},'Glisse une spécialité dans la grille (jour, heure, salle), puis un enseignant, puis une salle sur le bloc, dans l\'ordre que tu veux. Un bloc dure 2 h. Le nombre de séances de chaque cours se règle dans Configuration, avant de placer.'));
   card.appendChild(h('button',{onclick:openBulkWeeks,title:'Régler les semaines de tous les blocs d\'une spécialité et d\'un groupe'},'Semaines de plusieurs blocs'));
   function sec(title,kind,items,cls,label){
     var box=h('div',{class:'palsec'},h('div',{class:'lb'},title));
@@ -932,7 +942,7 @@ function openTplEditor(t,pre){
     pw.errors.forEach(function(e){msgs.push(e);});
     if(pw.mondays.length>want.length)msgs.push((pw.mondays.length-want.length)+' semaine(s) ignorée(s) : le jour choisi tombe hors du semestre');
     if(c){
-      var others=placed(c.id)-linked().filter(function(x){return !x.edited||want.indexOf(x.tw)>=0;}).length;
+      var others=placedPlan(c.id,t?t.id:null);
       var after=others+want.length;
       info.textContent='Cours : '+after+' / '+c.sessions+' séances placées après enregistrement ('+want.length+' issues de cette séance type).';
       if(after>c.sessions)msgs.push('Trop de séances : '+after+' pour '+c.sessions+' prévues. Retire des semaines ou augmente le nombre dans Configuration > Cours.');
@@ -969,7 +979,7 @@ function openTplEditor(t,pre){
   langSel.addEventListener('change',function(){d.lang=langSel.value;if(d.lang)d.course='';openTplEditor(t,d);});
   var courseSel=h('select',{},h('option',{value:''},'Aucun cours (spécialité seule)'));
   S.courses.filter(function(c){return c.sem===d.sem;}).forEach(function(c){
-    courseSel.appendChild(h('option',{value:c.id},c.name+' ('+placed(c.id)+'/'+c.sessions+')'));
+    courseSel.appendChild(h('option',{value:c.id},c.name+' ('+placedPlan(c.id,t?t.id:null)+'/'+c.sessions+')'));
   });
   courseSel.value=d.course||'';
   courseSel.addEventListener('change',function(){
@@ -1026,7 +1036,7 @@ function openTplEditor(t,pre){
     if(d.end<=d.start){toast('L\'heure de fin doit être après l\'heure de début');return;}
     if(pw.errors.length){toast(pw.errors[0]);return;}
     if(!want.length){toast('Indique au moins une semaine dans le semestre');return;}
-    var others=c?placed(c.id)-(t?S.slots.filter(function(x){return x.tpl===t.id&&(!x.edited||want.indexOf(x.tw)>=0);}).length:0):0;
+    var others=c?placedPlan(c.id,t?t.id:null):0;
     if(c&&others+want.length>c.sessions){toast('Trop de séances : '+(others+want.length)+' pour '+c.sessions+' prévues pour « '+c.name+' ».');return;}
     var rec=t||{id:uid()};
     Object.assign(rec,{sem:d.sem,course:d.course,lang:d.course?'':(d.lang||''),groups:d.groups.slice(),teachers:d.teachers.slice(),room:d.room||'',day:d.day,start:d.start,dur:d.end-d.start,weeks:pw.mondays.slice().sort()});
@@ -1466,8 +1476,9 @@ function renderIssues(issues){
 function renderCourses(){
   var root=$('#courses');root.replaceChildren();
   var totalLeft=0;
-  curCourses().forEach(function(c){totalLeft+=Math.max(0,remaining(c));});
-  root.appendChild(h('h2',{},'Séances à placer ('+SEM().name+')',h('span',{class:'badge'+(totalLeft?' info':' ok')},String(totalLeft))));
+  var cntOf=function(c){return typeView?placedPlan(c.id,null):placed(c.id);};
+  curCourses().forEach(function(c){totalLeft+=Math.max(0,c.sessions-cntOf(c));});
+  root.appendChild(h('h2',{},(typeView?'Cours à glisser, séances restantes (':'Séances à placer (')+SEM().name+')',h('span',{class:'badge'+(totalLeft?' info':' ok')},String(totalLeft))));
 
   var sel=h('select',{'aria-label':'Filtrer par langue'},h('option',{value:''},'Toutes les langues'));
   S.languages.forEach(function(l){sel.appendChild(h('option',{value:l.id},l.name));});
@@ -1481,7 +1492,7 @@ function renderCourses(){
   var shown=0;
   curCourses().forEach(function(c){
     if(pf.lang&&c.lang!==pf.lang)return;
-    var n=placed(c.id),left=c.sessions-n;
+    var n=cntOf(c),left=c.sessions-n;
     if(pf.hideDone&&left<=0)return;
     shown++;
     var l=lang(c.lang),col=COLORS[l?l.color:'gris']||COLORS.gris;

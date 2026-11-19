@@ -194,3 +194,5 @@ textarea{width:100%;min-height:200px;border:1px solid var(--line);border-radius:
 .pchip:active{cursor:grabbing}
 @media print{#pal{display:none!important}}
 #pal .palrow.grp{align-items:center;margin-bottom:4px}#pal .gpk{font-weight:600;font-size:12px;min-width:48px;color:var(--muted)}
+body.typeweek aside.admin-only{display:flex;flex-direction:column}
+body.typeweek aside #courses{order:-1}
