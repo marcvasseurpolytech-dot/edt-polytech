@@ -860,7 +860,27 @@ function renderRoomBar(){
   var key=function(t){return t.name.replace(/^\S+\s+/,'').toLowerCase();};
   sec('Enseignants','teacher',S.teachers.slice().sort(function(a,b){return key(a)<key(b)?-1:key(a)>key(b)?1:0;}).map(function(t){return {id:t.id,name:t.name};}),'','Glisse cet enseignant sur un bloc');
   sec('Salles','room',S.rooms.map(function(r){return {id:r.id,name:r.name};}),'','Glisse cette salle sur un bloc');
-  sec('Groupes','group',S.groups.map(function(g){return {id:g.id,name:g.name};}),'','Glisse ce groupe sur un bloc');
+  (function(){
+    var box=h('div',{class:'palsec'},h('div',{class:'lb'},'Groupes (Gr1 = niveau le plus fort)')),order=[],by={};
+    S.groups.forEach(function(g){
+      var m=/^(.+?)\s+(Gr\s*\d+)$/i.exec(g.name),pk=m?m[1]:'Autres';
+      if(!by[pk]){by[pk]=[];order.push(pk);}
+      by[pk].push({g:g,short:m?m[2]:g.name});
+    });
+    order.forEach(function(pk){
+      var row=h('div',{class:'palrow grp'});
+      if(pk!=='Autres')row.appendChild(h('span',{class:'gpk'},pk));
+      by[pk].sort(function(x,y){return x.short<y.short?-1:x.short>y.short?1:0;}).forEach(function(o){
+        var b=h('span',{class:'pchip group',draggable:'true',title:o.g.name+' : glisse ce groupe sur un bloc'},pk==='Autres'?o.g.name:o.short);
+        b.addEventListener('dragstart',function(e){curDrag={kind:'group'};e.dataTransfer.setData('text/plain','group:'+o.g.id);e.dataTransfer.effectAllowed='copy';});
+        b.addEventListener('dragend',function(){curDrag=null;clearDrop();});
+        row.appendChild(b);
+      });
+      box.appendChild(row);
+    });
+    if(!S.groups.length)box.appendChild(h('span',{class:'hint'},'Aucun (Configuration).'));
+    card.appendChild(box);
+  })();
 }
 function clearDrop(){var l=document.querySelectorAll('.dropok');for(var i=0;i<l.length;i++)l[i].classList.remove('dropok');}
 function typeBlocks(){
