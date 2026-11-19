@@ -695,6 +695,89 @@ function tplPass(t){
   if(v.mode==='room')return t.room===v.id;
   var c=course(t.course);return !!c&&c.lang===v.id;
 }
+/* ---------- Semaine type : conflits, glisser-deposer, barre des enseignants ---------- */
+var curDrag=null;
+function tplIssues(){
+  var out=[],T=S.template.filter(function(t){return t.sem===S.current;}),i,j;
+  for(i=0;i<T.length;i++){
+    var a=T[i],c=capacityIssue(a);
+    if(c)out.push({kind:'capacite',t:a,ids:[a.id],a:null,b:null,
+      text:'['+semName(a.sem)+'] '+DAYS[a.day]+' '+fmt(a.start)+' : '+c.total+' étudiants prévus pour '+c.cap+' places en '+c.room+' ("'+titleOf(a)+'")'});
+    for(j=i+1;j<T.length;j++){
+      var b=T[j];
+      if(a.day!==b.day||!(a.start<b.start+b.dur&&b.start<a.start+a.dur))continue;
+      var common=a.weeks.filter(function(w){return b.weeks.indexOf(w)>=0;});
+      if(!common.length)continue;
+      var sh=shared({groups:a.groups,teachers:a.teachers,room:a.room},{groups:b.groups,teachers:b.teachers,room:b.room});
+      if(sh.length)out.push({kind:'conflit',t:a,ids:[a.id,b.id],a:null,b:null,
+        text:'['+semName(a.sem)+'] '+DAYS[a.day]+' '+fmt(Math.max(a.start,b.start))+' : '+sh.join(', ')+' en double ("'+titleOf(a)+'" et "'+titleOf(b)+'"), semaines '+fmtWeeks(common,S.current)});
+    }
+  }
+  return out;
+}
+function tplPreFromCourse(c,day,room,start){
+  var dur=c?c.dur:120;
+  return {id:null,sem:SEM().id,course:c?c.id:'',groups:c?c.groups.slice():[],teachers:c?c.teachers.slice():[],
+    room:room||(c?c.room||'':''),day:day,start:start,end:Math.min(1440,start+dur),dur:dur,weeks:[]};
+}
+function afterTplChange(t,msg){
+  save();renderAll();
+  var bad=tplIssues().filter(function(i){return i.ids&&i.ids.indexOf(t.id)>=0;});
+  toast(bad.length?'Attention : '+bad[0].text:msg+' Pense à « Générer le semainier ».');
+}
+function moveTpl(t,day,room,start){
+  start=clamp(start,0,Math.max(0,1440-t.dur));
+  if(t.day===day&&t.start===start&&(t.room||'')===room)return;
+  t.day=day;t.start=start;t.room=room;
+  afterTplChange(t,'Séance type déplacée.');
+}
+function dropOnColumn(e,col,day,room,T0,T1){
+  e.preventDefault();
+  if(!CAN_EDIT)return;
+  var txt=(e.dataTransfer&&e.dataTransfer.getData('text/plain'))||'';
+  var r=col.getBoundingClientRect(),off=(curDrag&&curDrag.kind==='tpl')?curDrag.offY:0;
+  var start=clamp(T0+Math.round((e.clientY-r.top-off)/PT/SNAP)*SNAP,T0,Math.max(T0,T1-120));
+  if(txt.indexOf('tpl:')===0){
+    var t=S.template.filter(function(x){return x.id===txt.slice(4);})[0];
+    if(t)moveTpl(t,day,room,clamp(T0+Math.round((e.clientY-r.top-off)/PT/SNAP)*SNAP,0,1440));
+    return;
+  }
+  if(txt.indexOf('teacher:')===0)return;
+  var c=course(txt);
+  if(c&&c.sem===SEM().id)openTplEditor(null,tplPreFromCourse(c,day,room,start));
+}
+function teacherUsage(){
+  var u={};
+  S.slots.forEach(function(x){if(x.sem===S.current)x.teachers.forEach(function(t){u[t]=true;});});
+  S.template.forEach(function(x){if(x.sem===S.current)x.teachers.forEach(function(t){u[t]=true;});});
+  return u;
+}
+function renderTeacherBar(){
+  var bar=$('#tbar');if(!bar)return;
+  bar.replaceChildren();
+  var v=S.view,use=teacherUsage(),sel=v.mode==='teacher'?S.teachers.filter(function(t){return t.id===v.id;})[0]:null;
+  bar.className='tbar'+(sel?'':' nocap');
+  bar.appendChild(h('span',{class:'lb'},'Un bouton par enseignant :'));
+  if(!S.teachers.length){bar.appendChild(h('span',{class:'hint'},'aucun enseignant pour l\'instant (Configuration > Enseignants).'));return;}
+  bar.appendChild(h('button',{class:'tb'+(sel?'':' on'),title:'Voir tout le monde',onclick:function(){v.mode='all';v.id=null;save();renderAll();}},'Tous'));
+  var key=function(t){return t.name.replace(/^\S+\s+/,'').toLowerCase();};
+  S.teachers.slice().sort(function(a,b){return key(a)<key(b)?-1:key(a)>key(b)?1:0;}).forEach(function(t){
+    var on=sel&&sel.id===t.id,dr=CAN_EDIT&&typeView;
+    var b=h('button',{class:'tb'+(on?' on':'')+(use[t.id]?'':' none'),draggable:dr?'true':'false',
+      title:(dr?'Clique pour voir sa semaine, ou glisse-le sur un bloc pour l\'ajouter à la séance. ':'Voir sa semaine : où il est et avec qui. ')+(use[t.id]?'':'(aucune séance ce semestre)')},t.name);
+    b.addEventListener('click',function(){v.mode='teacher';v.id=t.id;save();renderAll();});
+    if(dr){
+      b.addEventListener('dragstart',function(e){curDrag={kind:'teacher'};e.dataTransfer.setData('text/plain','teacher:'+t.id);e.dataTransfer.effectAllowed='copy';});
+      b.addEventListener('dragend',function(){curDrag=null;clearDrop();});
+    }
+    bar.appendChild(b);
+  });
+  if(sel){
+    var n=typeView?S.template.filter(function(x){return x.sem===S.current&&x.teachers.indexOf(sel.id)>=0;}).length:visibleSlots().length;
+    bar.appendChild(h('span',{class:'cap'},(typeView?'Semaine type de ':'Semaine de ')+sel.name+' : '+n+' séance'+(n>1?'s':'')+(n?'. Salle et groupes sur chaque bloc.':'.')));
+  }
+}
+function clearDrop(){var l=document.querySelectorAll('.dropok');for(var i=0;i<l.length;i++)l[i].classList.remove('dropok');}
 function typeBlocks(){
   return S.template.filter(function(t){return t.sem===S.current&&tplPass(t);}).map(function(t){
     return {id:t.id,day:t.day,start:t.start,dur:t.dur,room:t.room||'',slot:t,t:t,mondays:t.weeks.slice()};
@@ -884,39 +967,50 @@ function renderTypeWeek(){
     var bar=h('div',{class:'tw-gen'+(pn?' todo':'')},
       h('span',{},S.template.some(function(t){return t.sem===S.current;})
         ?(pn?pn+' changement'+(pn>1?'s':'')+' à répercuter dans le semainier ('+pd0.created+' à créer, '+pd0.updated+' à mettre à jour, '+pd0.removed+' à retirer).':'Le semainier est à jour avec la semaine type.')
-        :'Commence par ajouter des séances type, puis génère le semainier.'),
+        :'Commence par construire la semaine type (glisse un cours de la liste dans la grille), puis génère le semainier.'),
       h('span',{class:'sp'}),
       h('button',{class:'primary',onclick:generateWeekly,disabled:!pn},'Générer le semainier'));
     root.appendChild(bar);
+    root.appendChild(h('p',{class:'hint tw-help'},'Glisse un cours depuis la liste de droite vers un jour, une salle et une heure. Glisse un bloc pour le déplacer (autre salle, autre jour, autre heure). Glisse un nom d\'enseignant sur un bloc pour l\'ajouter. Clique sur un bloc pour modifier ses semaines.'));
   }
+  var hasAny=S.template.some(function(t){return t.sem===S.current;});
   if(!agg.length){
-    var em=h('div',{class:'empty'},S.template.some(function(t){return t.sem===S.current;})?'Aucune séance type pour cette sélection.':'La semaine type de ce semestre est vide.');
+    var em=h('div',{class:'empty'},hasAny?'Aucune séance type pour cette sélection.':'La semaine type de ce semestre est vide.');
     if(CAN_EDIT){
       em.appendChild(h('div',{},h('button',{class:'primary',onclick:function(){openTplEditor(null);}},'+ Séance type')));
-      if(importableBlocks().length)em.appendChild(h('div',{style:'margin-top:8px'},h('button',{onclick:importTemplate},'Créer la semaine type à partir des séances déjà placées dans le calendrier')));
+      if(!hasAny&&importableBlocks().length)em.appendChild(h('div',{style:'margin-top:8px'},h('button',{onclick:importTemplate},'Créer la semaine type à partir des séances déjà placées dans le calendrier')));
     }
     root.appendChild(em);
-    return;
+    if(!CAN_EDIT)return;
+  }
+  var badIds={};
+  if(CAN_EDIT)tplIssues().forEach(function(i){(i.ids||[]).forEach(function(id){badIds[id]=true;});});
+  var gT0=S.view.startH*60,gT1=S.view.endH*60;
+  if(agg.length){
+    gT0=Math.min(gT0,Math.floor(Math.min.apply(null,agg.map(function(a){return a.start;}))/60)*60);
+    gT1=Math.max(gT1,Math.ceil(Math.max.apply(null,agg.map(function(a){return a.start+a.dur;}))/60)*60);
   }
   var d,nd=agg.some(function(a){return a.day>=5;})?6:5;
   for(d=0;d<nd;d++){
     var items=agg.filter(function(a){return a.day===d;});
     var box=h('section',{class:'tw-day'},h('h2',{},DAYS[d]+' · semaine type '+sm.name));
-    if(!items.length){
+    if(!items.length&&!CAN_EDIT){
       box.appendChild(h('div',{class:'tw-none'},'Aucun cours'));
-      if(CAN_EDIT)(function(day){
-        box.appendChild(h('button',{onclick:function(){openTplEditor(null,{id:null,sem:SEM().id,course:'',groups:[],teachers:[],room:'',day:day,start:480,end:600,dur:120,weeks:[]});}},'+ Séance type'));
-      })(d);
       root.appendChild(box);continue;
     }
-    var roomIds=S.rooms.map(function(r){return r.id;}).filter(function(id){return items.some(function(a){return a.room===id;});});
-    if(items.some(function(a){return !a.room||roomIds.indexOf(a.room)<0;}))roomIds.push('');
-    var t0=Math.floor(Math.min.apply(null,items.map(function(a){return a.start;}))/60)*60;
-    var t1=Math.ceil(Math.max.apply(null,items.map(function(a){return a.start+a.dur;}))/60)*60;
-    var H=Math.round((t1-t0)*PT),tpl='52px repeat('+roomIds.length+',minmax(130px,1fr))';
-    var heads=h('div',{class:'heads tw-heads',style:'grid-template-columns:'+tpl},h('div',{class:'gut'}));
+    var roomIds=CAN_EDIT?S.rooms.map(function(r){return r.id;}):S.rooms.map(function(r){return r.id;}).filter(function(id){return items.some(function(a){return a.room===id;});});
+    if(agg.some(function(a){return !a.room||S.rooms.every(function(r){return r.id!==a.room;});})&&(CAN_EDIT||items.some(function(a){return !a.room||roomIds.indexOf(a.room)<0;})))roomIds.push('');
+    if(!roomIds.length)roomIds.push('');
+    var t0,t1;
+    if(CAN_EDIT){t0=gT0;t1=gT1;}
+    else{
+      t0=Math.floor(Math.min.apply(null,items.map(function(a){return a.start;}))/60)*60;
+      t1=Math.ceil(Math.max.apply(null,items.map(function(a){return a.start+a.dur;}))/60)*60;
+    }
+    var H=Math.round((t1-t0)*PT),tpl='52px repeat('+roomIds.length+',minmax(120px,1fr))',minW=52+roomIds.length*120;
+    var heads=h('div',{class:'heads tw-heads',style:'grid-template-columns:'+tpl+';min-width:'+minW+'px'},h('div',{class:'gut'}));
     roomIds.forEach(function(rid){heads.appendChild(h('div',{class:'dh'},rid?nm('rooms',rid):'Sans salle'));});
-    var body=h('div',{class:'body',style:'grid-template-columns:'+tpl+';height:'+H+'px;--hh:'+(60*PT)+'px'});
+    var body=h('div',{class:'body',style:'grid-template-columns:'+tpl+';height:'+H+'px;min-width:'+minW+'px;--hh:'+(60*PT)+'px'});
     var gut=h('div',{class:'gut',style:'height:'+H+'px'});
     var hr;
     for(hr=t0/60;hr<=t1/60;hr++)gut.appendChild(h('div',{class:'hl',style:'top:'+Math.round((hr*60-t0)*PT)+'px'},pad(hr)+':00'));
@@ -928,8 +1022,14 @@ function renderTypeWeek(){
           if(!CAN_EDIT||e.target!==col)return;
           var r=col.getBoundingClientRect();
           var m=clamp(T0+Math.floor((e.clientY-r.top)/PT/SNAP)*SNAP,T0,Math.max(T0,T1-120));
-          openTplEditor(null,{id:null,sem:SEM().id,course:'',groups:[],teachers:[],room:room,day:day,start:m,end:Math.min(1440,m+120),dur:120,weeks:[]});
+          var ac=armed?course(armed):null;
+          openTplEditor(null,tplPreFromCourse(ac&&ac.sem===SEM().id?ac:null,day,room,m));
         });
+        if(CAN_EDIT){
+          col.addEventListener('dragover',function(e){e.preventDefault();col.classList.add('dropok');});
+          col.addEventListener('dragleave',function(e){if(e.target===col)col.classList.remove('dropok');});
+          col.addEventListener('drop',function(e){clearDrop();dropOnColumn(e,col,day,room,T0,T1);});
+        }
       })(d,rid,t0,t1);
       var list=items.filter(function(a){return rid?a.room===rid:(!a.room||roomIds.indexOf(a.room)<0);});
       var lay=layout(list);
@@ -941,20 +1041,37 @@ function renderTypeWeek(){
         var cc=course(s.course),lg=cc?lang(cc.lang):null;
         var h0=Math.max(18,Math.round(a.dur*PT)-2);
         var tip=titleOf(s)+(lg?' ('+lg.name+')':'')+'\n'+fmt(a.start)+'-'+fmt(a.start+a.dur)+(gl?'\nGroupes : '+gl:'')+(tl?'\nEnseignants : '+tl:'')+'\nSemaines : '+wk;
+        if(badIds[a.id])tip+='\n\nATTENTION : conflit ou capacité dépassée';
         var evT=h('div',{
-          class:'ev tw-ev'+(CAN_EDIT?' tw-edit':''),
+          class:'ev tw-ev'+(CAN_EDIT?' tw-edit':'')+(badIds[a.id]?' bad':''),
           style:'top:'+Math.round((a.start-t0)*PT)+'px;height:'+h0+'px;left:calc('+(L.lane*100/L.lanes)+'% + 1px);width:calc('+(100/L.lanes)+'% - 3px);background:'+c[0]+';border-left-color:'+c[1]+';color:'+c[1],
-          title:tip
+          title:tip,draggable:CAN_EDIT?'true':'false'
         },
-          h('b',{},(gl?gl+' ':'')+titleOf(s)),
+          h('b',{},(badIds[a.id]?'⚠ ':'')+(gl?gl+' ':'')+titleOf(s)),
           h('span',{},fmt(a.start)+'-'+fmt(a.start+a.dur)+(tl?' · '+tl:'')),
           h('span',{class:'tw-wk'},'sem. '+wk));
         evT.addEventListener('click',function(){if(CAN_EDIT)openTplEditor(a.t);});
+        if(CAN_EDIT){
+          evT.addEventListener('dragstart',function(e){
+            curDrag={kind:'tpl',offY:e.clientY-evT.getBoundingClientRect().top};
+            e.dataTransfer.setData('text/plain','tpl:'+a.t.id);e.dataTransfer.effectAllowed='move';
+          });
+          evT.addEventListener('dragend',function(){curDrag=null;clearDrop();});
+          evT.addEventListener('drop',function(e){
+            var txt=(e.dataTransfer&&e.dataTransfer.getData('text/plain'))||'';
+            if(txt.indexOf('teacher:')!==0)return;
+            e.preventDefault();e.stopPropagation();clearDrop();
+            var tid=txt.slice(8);
+            if(a.t.teachers.indexOf(tid)>=0){toast(nm('teachers',tid)+' est déjà sur cette séance.');return;}
+            a.t.teachers.push(tid);
+            afterTplChange(a.t,nm('teachers',tid)+' ajouté à la séance.');
+          });
+        }
         col.appendChild(evT);
       });
       body.appendChild(col);
     });
-    box.appendChild(heads);box.appendChild(body);root.appendChild(box);
+    box.appendChild(h('div',{class:'tw-scroll'},heads,body));root.appendChild(box);
   }
   var used={};
   agg.forEach(function(a){var cc=course(a.slot.course);if(cc&&cc.lang)used[cc.lang]=true;});
@@ -1007,7 +1124,7 @@ function timeFromY(col,clientY,dur){
 }
 
 function renderGrid(){
-  if(typeView){renderTypeWeek();if(CAN_EDIT)renderIssues(allIssues());syncToolbar();return;}
+  if(typeView){renderTypeWeek();if(CAN_EDIT)renderIssues(tplIssues());syncToolbar();return;}
   var vis=visibleSlots();
   ensureRange(vis);
   var v=S.view,n=v.days,t0=v.startH*60,t1=v.endH*60,H=Math.round((t1-t0)*PPM);
@@ -1207,6 +1324,7 @@ function renderIssues(issues){
   var ul=h('ul',{class:'issues'});
   issues.forEach(function(i){
     ul.appendChild(h('li',{class:(i.kind==='conflit'||i.kind==='trop')?'':'w',onclick:function(){
+      if(i.t&&!i.a){openTplEditor(i.t);return;}
       if(i.a){if(i.a.sem!==S.current){S.current=i.a.sem;renderAll();}S.view.week=mondayOf(i.a.date);fixWeek(S);save();renderGrid();openEditor(i.a);}
       else{openConfig('courses');}
     }},i.text));
@@ -1244,8 +1362,9 @@ function renderCourses(){
       h('div',{class:'bar'},h('i',{style:'width:'+pct+'%;background:'+col[1]})));
     item.addEventListener('click',function(){armed=(armed===c.id)?null:c.id;renderArm();renderCourses();});
     item.addEventListener('dragstart',function(e){
-      e.dataTransfer.setData('text/plain',c.id);e.dataTransfer.effectAllowed='copy';
+      curDrag={kind:'course'};e.dataTransfer.setData('text/plain',c.id);e.dataTransfer.effectAllowed='copy';
     });
+    item.addEventListener('dragend',function(){curDrag=null;clearDrop();});
     list.appendChild(item);
   });
   if(!shown){
@@ -1292,6 +1411,7 @@ function syncToolbar(){
   var sm=SEM();
   $('#semname').textContent='Semestre '+sm.name+' : du '+fullDate(sm.start)+' au '+fullDate(sm.end);
   $('#sem').value=sm.id;
+  renderTeacherBar();
   var first=mondayOf(sm.start),last=mondayOf(sm.end);
   $('#wlabel').textContent='Semaine '+isoWeek(v.week)+' · '+shortDate(v.week)+' au '+shortDate(addDays(v.week,v.days-1))+' (n° '+weekIdx(v.week)+'/'+weekIdx(last)+' du semestre)';
   $('#prev').disabled=v.week<=first;
@@ -1960,19 +2080,21 @@ function openExport(){
 /* ---------- Tutoriel guidé ---------- */
 var TOUR_KEY='edt-tour-v1';
 var TOUR=[
-  {sel:null,t:'Bienvenue Chef Bichette',p:'Cette appli construit les emplois du temps d\'un semestre en deux temps : tu définis d\'abord la semaine type (qui fait quoi, quel jour, à quelle heure, quelles semaines), puis tu cliques sur « Générer le semainier » pour en tirer le calendrier semaine par semaine. Tu pars d\'un emploi du temps vierge. Un tour rapide ?'},
-  {sel:'#sem',t:'1. Choisis le semestre',p:'De S5 à S10. Chaque semestre a ses propres cours, sa semaine type et son semainier, avec ses dates de début et de fin.'},
-  {sel:'#cfg',t:'2. Commence par la configuration',p:'Tu y règles les semestres (dates), les langues (Anglais, Allemand, Espagnol, FLE, Autre, avec leurs couleurs), les groupes (effectifs), les enseignants, les salles (capacités) et les cours. Pour chaque cours, tu indiques son nombre de séances : il est propre à chaque cours.',view:'type'},
-  {sel:'#wtype',t:'3. Construis la semaine type',p:'Ce bouton bascule entre la semaine type et le calendrier. Ici, la semaine type : un tableau par jour, une colonne par salle, avec le groupe, la langue, l\'enseignant et les semaines de chaque cours.',view:'type'},
-  {sel:'#tt',t:'4. Ajoute les séances type',p:'Clique dans une colonne (ou sur « + Séance ») : choisis le cours, le jour, l\'heure, puis les semaines, par exemple 48-50 53, S37 à S42, ou de telle date à telle date. Les groupes, enseignants et salle viennent du cours et restent modifiables. Le compteur du cours t\'empêche de dépasser son nombre de séances, et les conflits sont signalés.',view:'type'},
-  {sel:'.tw-gen',t:'5. Génère le semainier',p:'Quand ta semaine type est prête, clique sur « Générer le semainier ». Chaque séance type devient une séance dans le calendrier, pour chacune de ses semaines. Le compteur te dit combien de changements restent à répercuter : tu peux modifier la semaine type puis régénérer à tout moment.',view:'type'},
-  {sel:'.top .wk',t:'6. Parcours le semainier',p:'Tu es maintenant dans le calendrier. Les flèches changent de semaine ; le numéro est celui de la semaine ISO (48, 49, 53...). Tu peux aussi sauter à une date précise.',view:'cal'},
-  {sel:'#tt',t:'7. Ajuste une semaine sans toucher à la semaine type',p:'Clique sur une séance pour la modifier, la dupliquer ou l\'annuler ; glisse-la pour changer le jour ou l\'heure. Ces changements ne touchent jamais la semaine type, et une régénération ne les écrase pas. « Rétablir selon la semaine type » annule une modification manuelle.',view:'cal'},
-  {sel:'#courses',t:'8. Reprogramme une séance annulée',p:'Une séance annulée repart dans les séances à placer : le compteur du cours (par exemple 11/12) te montre ce qui manque. Clique sur le cours, puis dans la grille pour la replacer à un autre créneau, ou fais-le glisser depuis la liste.',view:'cal'},
-  {sel:'#conf',t:'9. Le contrôle',p:'L\'appli vérifie en continu : groupe, enseignant ou salle en double, salle trop petite, séance hors semestre, trop de séances pour un cours. Les séances concernées sont cerclées de rouge ; clique sur une ligne pour la corriger.',view:'cal'},
-  {sel:'#mode',t:'10. Filtre la vue',p:'Affiche tout, ou seulement un groupe, un enseignant, une salle ou une langue, dans la semaine type comme dans le calendrier : pratique pour vérifier ou imprimer un emploi du temps individuel.',view:'cal'},
-  {sel:'#exp',t:'11. Sauvegarde et projection',p:'Tout s\'enregistre automatiquement sur le serveur : le voyant « Enregistré » en haut le confirme, sans aucun redéploiement. La vue utilisateur (adresse sans /admin) est en lecture seule et se met à jour toute seule pour la projection ; ajoute ?vue=type à l\'adresse pour projeter la semaine type. Export / Import permet de garder une copie JSON et de récupérer des CSV pour Excel.',view:'cal'},
-  {sel:null,t:'C\'est parti',p:'Tu peux relancer ce tutoriel à tout moment avec le bouton « Tutoriel ». Commence par Configuration pour saisir tes cours et leur nombre de séances, puis construis la semaine type et génère le semainier.',view:'type'}
+  {sel:null,t:'Bienvenue Chef Bichette',p:'Cette appli construit les emplois du temps d\'un semestre en deux temps. D\'abord la semaine type, pour toutes les langues : tu glisses des blocs (langue, enseignant, salle) dans une grille jour par jour. Ensuite tu cliques sur « Générer le semainier » : le calendrier de chaque semaine se remplit, et un bouton par enseignant permet de voir où il est et avec qui. Un tour rapide ?'},
+  {sel:'#sem',t:'1. Choisis le semestre',p:'De S5 à S10. Chaque semestre a sa propre semaine type, son semainier et ses dates de début et de fin.'},
+  {sel:'#cfg',t:'2. Prépare la configuration',p:'Les langues (avec leurs couleurs), les groupes (TC3, TC4, TC2A3, TC2A4 de Gr1 à Gr4, M1 GC, M1 GM, chacun pouvant être rattaché à un autre groupe), les 26 enseignants et les salles sont déjà prêts. Il te reste à créer les cours : une matière, une langue, un ou plusieurs groupes, un enseignant, une salle par défaut et un nombre de séances.',view:'type'},
+  {sel:'#wtype',t:'3. Ouvre la semaine type',p:'Ce bouton bascule entre la semaine type et le calendrier. Dans la semaine type, il y a un tableau par jour, avec une colonne par salle comme dans ton PDF. Chaque bloc porte la couleur de sa langue, le groupe, l\'enseignant et les semaines concernées.',view:'type'},
+  {sel:'#courses',t:'4. Glisse un cours dans la grille',p:'Prends un cours dans cette liste et dépose-le sur un jour, dans la colonne d\'une salle, à l\'heure voulue. Le bloc reprend la langue, le groupe et l\'enseignant du cours. Une fenêtre s\'ouvre alors pour indiquer les semaines : 48-50 53, S37 à S42, ou de telle date à telle date.',view:'type'},
+  {sel:'#tt',t:'5. Déplace les blocs',p:'Pour changer un bloc de salle, de jour ou d\'heure, il suffit de le glisser vers sa nouvelle place : la salle est celle de la colonne où tu le déposes. Clique sur un bloc pour modifier ses semaines, son enseignant ou sa salle. Les conflits (même groupe, même enseignant ou même salle en même temps, salle trop petite) sont entourés de rouge et listés dans Contrôle.',view:'type'},
+  {sel:'#tbar',t:'6. Glisse un enseignant sur un bloc',p:'Dans la semaine type, tu peux aussi attraper le nom d\'un enseignant dans cette barre et le déposer sur un bloc pour l\'ajouter à la séance. Un simple clic sur le nom affiche seulement sa semaine type.',view:'type'},
+  {sel:'.tw-gen',t:'7. Génère le semainier',p:'Quand la semaine type est prête, clique sur « Générer le semainier ». Chaque bloc devient une séance du calendrier, pour chacune de ses semaines. Le compteur indique combien de changements restent à répercuter : tu peux modifier la semaine type puis régénérer à tout moment.',view:'type'},
+  {sel:'#tbar',t:'8. Un bouton par enseignant',p:'Dans le calendrier, clique sur le nom d\'un enseignant : tu vois sa semaine, avec pour chaque séance la salle et les groupes. Les flèches changent de semaine et « Imprimer » donne sa feuille de la semaine. « Tous » revient à la vue complète. La vue par groupe, par salle ou par langue reste disponible dans le menu « Vue ».',view:'cal'},
+  {sel:'.top .wk',t:'9. Parcours le semainier',p:'Le numéro de semaine est celui de la semaine ISO (48, 49, 53...). Les jours fériés sont signalés en orange et les vacances de la zone B en bleu. Tu peux aussi sauter à une date précise.',view:'cal'},
+  {sel:'#tt',t:'10. Ajuste une semaine sans toucher à la semaine type',p:'Clique sur une séance pour la modifier, la dupliquer ou l\'annuler ; glisse-la pour changer le jour ou l\'heure. Ces changements ne touchent jamais la semaine type, et une régénération ne les écrase pas. « Rétablir selon la semaine type » annule une modification manuelle.',view:'cal'},
+  {sel:'#courses',t:'11. Reprogramme une séance annulée',p:'Une séance annulée repart dans les séances à placer : le compteur du cours (par exemple 11/12) montre ce qui manque. Fais-la glisser de la liste vers un autre créneau du calendrier.',view:'cal'},
+  {sel:'#conf',t:'12. Le contrôle',p:'L\'appli vérifie en continu : groupe, enseignant ou salle en double, salle trop petite, séance hors semestre, séance un jour férié ou pendant les vacances, trop de séances pour un cours. Clique sur une ligne pour corriger.',view:'cal'},
+  {sel:'#exp',t:'13. Sauvegarde et projection',p:'Tout s\'enregistre automatiquement sur le serveur : le voyant « Enregistré » en haut le confirme, sans redéploiement. La vue utilisateur (adresse sans /admin) est en lecture seule, avec les mêmes boutons par enseignant, et se met à jour toute seule pour la projection. Export / Import garde une copie JSON et des CSV pour Excel.',view:'cal'},
+  {sel:null,t:'C\'est parti',p:'Tu peux relancer ce tutoriel avec le bouton « Tutoriel ». Ordre conseillé : crée les cours dans Configuration, glisse-les dans la semaine type, génère le semainier, puis clique sur le nom de chaque enseignant pour vérifier sa semaine.',view:'type'}
 ];
 var tourIdx=-1;
 
