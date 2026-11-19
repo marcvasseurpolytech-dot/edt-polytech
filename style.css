@@ -174,3 +174,6 @@ textarea{width:100%;min-height:200px;border:1px solid var(--line);border-radius:
   .tbar.nocap{display:none!important}
   .tbar .cap{font-size:16px;margin:0 0 8px}
 }
+
+.news{margin:8px 0 4px;padding-left:20px;line-height:1.5}
+.news li{margin-bottom:6px}

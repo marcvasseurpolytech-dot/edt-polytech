@@ -2186,6 +2186,23 @@ function renderAll(){
   renderGrid();
 }
 
+var APP_VERSION='2026-11-19';
+function seenVersion(){try{return localStorage.getItem('edtSeenVersion')===APP_VERSION;}catch(e){return false;}}
+function markVersionSeen(){try{localStorage.setItem('edtSeenVersion',APP_VERSION);}catch(e){}}
+// Message affiche une fois par navigateur apres une mise a jour de l'appli
+function showWhatsNew(next){
+  function done(){markVersionSeen();closeModal();if(next)setTimeout(next,200);}
+  openModal(h('div',{class:'modal'},
+    h('h2',{},'La version a été améliorée'),
+    h('p',{},'Tout ce que tu as déjà saisi est conservé : semestres et leurs dates, langues et couleurs, groupes, cours, séances. Rien n\'a été modifié ni remplacé.'),
+    h('ul',{class:'news'},
+      h('li',{},h('b',{},'Semaine type en glisser-déposer.'),' Glisse un cours de la liste dans un jour, une salle et une heure ; glisse un bloc pour le déplacer ; glisse un nom d\'enseignant sur un bloc.'),
+      h('li',{},h('b',{},'Un bouton par enseignant.'),' Un clic affiche sa semaine : où il est et avec qui.'),
+      h('li',{},h('b',{},'Jours fériés et vacances de la zone B.'),' Ils sont signalés dans la grille et dans Contrôle, et se mettent à jour tout seuls.'),
+      h('li',{},h('b',{},'Groupes, enseignants et salles préremplis'),' d\'après le PDF des langues, et chaque groupe peut être rattaché à un autre groupe.'),
+      h('li',{},h('b',{},'Tutoriel refait.'),' Le bouton « Tutoriel » explique la construction de la semaine type, puis la génération du semainier.')),
+    h('div',{class:'actions'},h('span',{class:'sp'}),h('button',{class:'primary',onclick:done},'Compris'))));
+}
 function startApp(){
   fetchRemote().then(function(j){
     applyRemote(j,false);
@@ -2202,7 +2219,8 @@ function startApp(){
         var nt=addDefaultTeachers(),nr=addDefaultRooms();S.seededRes=true;save();renderAll();
         toast(nt+' enseignants et '+nr+' salles ajoutés d\'après ton PDF. Modifie-les dans Configuration.');
       }else if(!S.seededRes){S.seededRes=true;save();}
-      if(!tourSeen())setTimeout(startTour,500);
+      var runTour=function(){if(!tourSeen())setTimeout(startTour,500);};
+      if(!seenVersion())setTimeout(function(){showWhatsNew(runTour);},400);else runTour();
     }else{
       setInterval(function(){
         fetchRemote().then(function(r){if(r.rev!==rev){applyRemote(r,true);renderAll();}}).catch(function(){});
