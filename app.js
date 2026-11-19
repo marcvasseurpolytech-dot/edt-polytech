@@ -788,6 +788,52 @@ function renderTeacherBar(){
     bar.appendChild(h('span',{class:'cap'},(typeView?'Semaine type de ':'Semaine de ')+sel.name+' : '+n+' séance'+(n>1?'s':'')+(n?'. Salle et groupes sur chaque bloc.':'.')));
   }
 }
+function openBulkWeeks(){
+  var sm=SEM(),f={lang:'',group:'',txt:''};
+  var info=h('div',{class:'hint'}),warn=h('div',{class:'hint'});
+  function match(){
+    return S.template.filter(function(t){
+      if(t.sem!==S.current)return false;
+      if(f.lang){var l=slotLang(t);if(!l||l.id!==f.lang)return false;}
+      if(f.group&&!t.groups.some(function(g){return linkedGroups(g,f.group);}))return false;
+      return true;
+    });
+  }
+  function refresh(){
+    var m=match(),pw=parseWeeks(f.txt,sm.id);
+    info.textContent=m.length+' bloc'+(m.length>1?'s':'')+' concerné'+(m.length>1?'s':'')+' : '+(m.slice(0,6).map(function(t){return DAYS[t.day]+' '+fmt(t.start)+' '+titleOf(t);}).join(', ')||'aucun')+(m.length>6?'...':'');
+    warn.textContent=pw.errors.length?pw.errors[0]:(f.txt?pw.mondays.length+' semaine(s) retenue(s) : '+fmtWeeks(pw.mondays,sm.id):'');
+  }
+  var ls=h('select',{},h('option',{value:''},'Toutes les spécialités'));
+  S.languages.forEach(function(l){ls.appendChild(h('option',{value:l.id},l.name));});
+  var gs=h('select',{},h('option',{value:''},'Tous les groupes'));
+  S.groups.forEach(function(g){gs.appendChild(h('option',{value:g.id},g.name));});
+  ls.addEventListener('change',function(){f.lang=ls.value;refresh();});
+  gs.addEventListener('change',function(){f.group=gs.value;refresh();});
+  var inp=h('input',{type:'text',placeholder:'ex. 33-35 ou S37 à S42'});
+  inp.addEventListener('input',function(){f.txt=inp.value;refresh();});
+  var rest=h('button',{type:'button',onclick:function(){
+    var t0=todayStr(),pick=semWeeks(sm.id).filter(function(w){return addDays(w.monday,6)>=t0;});
+    f.txt=fmtWeeks(pick.map(function(w){return w.monday;}),sm.id);inp.value=f.txt;refresh();
+  }},'Semaines restantes (à partir d\'aujourd\'hui)');
+  function apply(){
+    var m=match(),pw=parseWeeks(f.txt,sm.id);
+    if(!m.length){toast('Aucun bloc ne correspond.');return;}
+    if(pw.errors.length){toast(pw.errors[0]);return;}
+    if(!pw.mondays.length){toast('Indique au moins une semaine.');return;}
+    m.forEach(function(t){t.weeks=pw.mondays.filter(function(w){return inSemester(addDays(w,t.day),t.sem);});});
+    save();closeModal();renderAll();
+    toast('Semaines appliquées à '+m.length+' bloc'+(m.length>1?'s':'')+'. Pense à « Générer le semainier ».');
+  }
+  openModal(h('div',{class:'modal'},
+    h('h2',{},'Semaines de plusieurs blocs à la fois'),
+    h('p',{class:'hint'},'Choisis la spécialité et le groupe (par exemple Anglais et TC4) : les semaines saisies remplacent celles de tous les blocs correspondants, quel que soit leur jour ou leur heure. Seules les semaines comprises dans le semestre (du '+fullDate(sm.start)+' au '+fullDate(sm.end)+') sont retenues : pour déborder, allonge la date de fin du semestre dans Configuration.'),
+    h('div',{class:'row2'},h('div',{class:'f'},h('label',{},'Spécialité'),ls),h('div',{class:'f'},h('label',{},'Groupe'),gs)),
+    h('div',{class:'f'},h('label',{},'Semaines'),inp,h('div',{style:'margin-top:6px'},rest),warn),
+    info,
+    h('div',{class:'actions'},h('span',{class:'sp'}),h('button',{onclick:closeModal},'Annuler'),h('button',{class:'primary',onclick:apply},'Appliquer'))));
+  refresh();
+}
 function renderRoomBar(){
   var bar=$('#rbar');if(bar){bar.hidden=true;bar.replaceChildren();}
   var card=$('#pal');if(!card)return;
@@ -797,6 +843,7 @@ function renderRoomBar(){
   if(!on)return;
   card.appendChild(h('h2',{},'Blocs à glisser'));
   card.appendChild(h('p',{class:'hint'},'Glisse une spécialité dans la grille (jour, heure, salle), puis un enseignant, puis une salle sur le bloc, dans l\'ordre que tu veux. Un bloc dure 2 h.'));
+  card.appendChild(h('button',{onclick:openBulkWeeks,title:'Régler les semaines de tous les blocs d\'une spécialité et d\'un groupe'},'Semaines de plusieurs blocs'));
   function sec(title,kind,items,cls,label){
     var box=h('div',{class:'palsec'},h('div',{class:'lb'},title));
     var row=h('div',{class:'palrow'});
