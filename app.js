@@ -313,7 +313,7 @@ function normalize(o){
 
 function fixWeek(o){
   var cs=semOf(o.current,o)||o.semesters[0];
-  var first=mondayOf(cs.start),last=mondayOf(cs.end),v=o.view;
+  var ce=eff(cs,o),first=mondayOf(ce.start),last=mondayOf(ce.end),v=o.view;
   if(!validDate(v.week))v.week=first;
   v.week=mondayOf(v.week);
   if(v.week<first)v.week=first;
@@ -474,12 +474,25 @@ function remaining(c){return c.sessions-placed(c.id);}
 function titleOf(s){var c=course(s.course),l=(!c&&s.lang)?lang(s.lang):null;return c?c.name:(l?l.name:(s.title||'Sans titre'));}
 function slotLang(s){var c=course(s.course);return c?lang(c.lang):(s.lang?lang(s.lang):null);}
 function slotColor(s){var l=slotLang(s);return COLORS[l?l.color:'gris']||COLORS.gris;}
-function inSemester(date,semId){var m=semId?semOf(semId):SEM();return !!m&&date>=m.start&&date<=m.end;}
+// Annee universitaire : de septembre a juillet. Les semaines se choisissent sur toute l'annee, quel que soit le semestre.
+function yearBounds(o){
+  var lo=null;
+  (o||S).semesters.forEach(function(x){if(validDate(x.start)&&(!lo||x.start<lo))lo=x.start;});
+  if(!lo)lo=todayStr();
+  var y=+lo.slice(0,4),mo=+lo.slice(5,7);
+  if(mo<8)y--;
+  return {start:y+'-09-01',end:(y+1)+'-07-31'};
+}
+function eff(m,o){
+  var yb=yearBounds(o);
+  return {start:m.start<yb.start?m.start:yb.start,end:m.end>yb.end?m.end:yb.end};
+}
+function inSemester(date,semId){var m=semId?semOf(semId):SEM();if(!m)return false;var e=eff(m);return date>=e.start&&date<=e.end;}
 function semName(id){var m=semOf(id);return m?m.name:'?';}
 
 /* Semaines du semestre (numéros ISO) */
 function semWeeks(semId){
-  var m=semOf(semId)||SEM(),out=[],cur=mondayOf(m.start),last=mondayOf(m.end);
+  var m=eff(semOf(semId)||SEM()),out=[],cur=mondayOf(m.start),last=mondayOf(m.end);
   while(cur<=last){out.push({num:isoWeek(cur),monday:cur});cur=addDays(cur,7);}
   return out;
 }
@@ -492,14 +505,14 @@ function parseWeeks(txt,semId){
     if(n){
       var num=+tok,found=weeks.filter(function(w){return w.num===num;})[0];
       if(found)picked[found.monday]=true;
-      else errors.push('La semaine '+num+' n\'est pas dans ce semestre');
+      else errors.push('La semaine '+num+' n\'est pas dans l\'année universitaire');
     }else if(m){
       var a=+m[1],b=+m[2],hit=0;
       weeks.forEach(function(w){
         var ok=a<=b?(w.num>=a&&w.num<=b):(w.num>=a||w.num<=b);
         if(ok){picked[w.monday]=true;hit++;}
       });
-      if(!hit)errors.push('Aucune semaine de '+tok+' dans ce semestre');
+      if(!hit)errors.push('Aucune semaine de '+tok+' dans l\'année universitaire');
     }else{
       errors.push('« '+tok+' » n\'est pas un numéro de semaine');
     }
@@ -586,7 +599,7 @@ function allIssues(){
     if(fg){out.push({kind:fg.kind==='ferie'?'ferie':'vacances',a:a,b:null,
       text:'['+semName(a.sem)+'] '+longDate(a.date)+' '+shortDate(a.date)+' : "'+titleOf(a)+'" tombe '+(fg.kind==='ferie'?'un jour férié ('+fg.name+')':'pendant les vacances scolaires ('+fg.name+')')});}
     if(!inSemester(a.date,a.sem)){out.push({kind:'hors',a:a,b:null,
-      text:'['+semName(a.sem)+'] '+longDate(a.date)+' '+shortDate(a.date)+' : "'+titleOf(a)+'" est en dehors du semestre'});}
+      text:'['+semName(a.sem)+'] '+longDate(a.date)+' '+shortDate(a.date)+' : "'+titleOf(a)+'" est en dehors de l\'année universitaire'});}
   });
   S.courses.forEach(function(c){
     var n=placed(c.id);
@@ -606,7 +619,7 @@ function draftIssues(d){
   var c=capacityIssue(d);
   if(c)msgs.push(c.total+' étudiants pour '+c.cap+' places en '+c.room);
   if(validDate(d.date)){var fg=dayFlag(d.date);if(fg)msgs.push(fg.kind==='ferie'?'Jour férié : '+fg.name:'Vacances scolaires (zone B) : '+fg.name);}
-  if(validDate(d.date)&&!inSemester(d.date,d.sem)){var ms=semOf(d.sem)||SEM();msgs.push('Date en dehors du semestre '+ms.name+' ('+fullDate(ms.start)+' au '+fullDate(ms.end)+')');}
+  if(validDate(d.date)&&!inSemester(d.date,d.sem)){var ms=semOf(d.sem)||SEM();msgs.push('Date en dehors de l\'année universitaire ('+fullDate(eff(ms).start)+' au '+fullDate(eff(ms).end)+')');}
   return msgs;
 }
 
@@ -837,7 +850,7 @@ function openBulkWeeks(){
   }
   openModal(h('div',{class:'modal'},
     h('h2',{},'Semaines de plusieurs blocs à la fois'),
-    h('p',{class:'hint'},'Choisis la spécialité et le groupe (par exemple Anglais et TC4) : les semaines saisies remplacent celles de tous les blocs correspondants, quel que soit leur jour ou leur heure. Seules les semaines comprises dans le semestre (du '+fullDate(sm.start)+' au '+fullDate(sm.end)+') sont retenues : pour déborder, allonge la date de fin du semestre dans Configuration.'),
+    h('p',{class:'hint'},'Choisis la spécialité et le groupe (par exemple Anglais et TC4) : les semaines saisies remplacent celles de tous les blocs correspondants, quel que soit leur jour ou leur heure. Toutes les semaines de l\'année universitaire (de septembre à juillet, du '+fullDate(eff(sm).start)+' au '+fullDate(eff(sm).end)+') peuvent être choisies.'),
     h('div',{class:'row2'},h('div',{class:'f'},h('label',{},'Spécialité'),ls),h('div',{class:'f'},h('label',{},'Groupe'),gs)),
     h('div',{class:'f'},h('label',{},'Semaines'),inp,h('div',{style:'margin-top:6px'},rest),warn),
     info,
@@ -940,7 +953,7 @@ function openTplEditor(t,pre){
   function refresh(){
     var c=course(d.course),msgs=[],pw=parseWeeks(d.weeksTxt,d.sem),want=nowDesired();
     pw.errors.forEach(function(e){msgs.push(e);});
-    if(pw.mondays.length>want.length)msgs.push((pw.mondays.length-want.length)+' semaine(s) ignorée(s) : le jour choisi tombe hors du semestre');
+    if(pw.mondays.length>want.length)msgs.push((pw.mondays.length-want.length)+' semaine(s) ignorée(s) : le jour choisi tombe hors de l\'année universitaire');
     if(c){
       var others=placedPlan(c.id,t?t.id:null);
       var after=others+want.length;
@@ -1035,13 +1048,13 @@ function openTplEditor(t,pre){
     var c=course(d.course),want=nowDesired(),pw=parseWeeks(d.weeksTxt,d.sem);
     if(d.end<=d.start){toast('L\'heure de fin doit être après l\'heure de début');return;}
     if(pw.errors.length){toast(pw.errors[0]);return;}
-    if(!want.length){toast('Indique au moins une semaine dans le semestre');return;}
+    if(!want.length){toast('Indique au moins une semaine de l\'année universitaire');return;}
     var others=c?placedPlan(c.id,t?t.id:null):0;
     if(c&&others+want.length>c.sessions){toast('Trop de séances : '+(others+want.length)+' pour '+c.sessions+' prévues pour « '+c.name+' ».');return;}
     var rec=t||{id:uid()};
     Object.assign(rec,{sem:d.sem,course:d.course,lang:d.course?'':(d.lang||''),groups:d.groups.slice(),teachers:d.teachers.slice(),room:d.room||'',day:d.day,start:d.start,dur:d.end-d.start,weeks:pw.mondays.slice().sort()});
     if(isNew)S.template.push(rec);
-    if(rec.sem!==S.current){S.current=rec.sem;S.view.week=mondayOf(SEM().start);armed=null;fixWeek(S);}
+    if(rec.sem!==S.current){S.current=rec.sem;S.view.week=mondayOf(eff(SEM()).start);armed=null;fixWeek(S);}
     save();closeModal();renderAll();
     toast('Séance type enregistrée. Clique sur « Générer le semainier » pour la répercuter dans le calendrier.');
   }
@@ -1081,7 +1094,7 @@ function renderTypeWeek(){
   semSelT.value=sm.id;
   semSelT.addEventListener('change',function(){switchSemester(semSelT.value);});
   root.appendChild(h('div',{class:'tw-sem'},h('label',{},'Semaine type du semestre ',semSelT),
-    h('span',{class:'hint'},'du '+fullDate(sm.start)+' au '+fullDate(sm.end))));
+    h('span',{class:'hint'},'année universitaire du '+fullDate(eff(sm).start)+' au '+fullDate(eff(sm).end))));
   if(CAN_EDIT){
     var pd0=syncStats(true),pn=pd0.created+pd0.updated+pd0.removed;
     var bar=h('div',{class:'tw-gen'+(pn?' todo':'')},
@@ -1306,7 +1319,7 @@ function renderGrid(){
     var col=h('div',{class:'col'+(inSemester(date)?'':' off')+(cf?' '+cf.kind:''),style:'height:'+H+'px'});
     col.addEventListener('click',function(e){
       if(!CAN_EDIT||e.target!==col||justDragged)return;
-      if(!inSemester(date)){toast('Cette date est en dehors du semestre');return;}
+      if(!inSemester(date)){toast('Cette date est en dehors de l\'année universitaire');return;}
       if(armed){
         var c=course(armed);
         if(c)placeCourse(c.id,date,timeFromY(col,e.clientY,c.dur),armWeeksTxt);
@@ -1321,7 +1334,7 @@ function renderGrid(){
       var cid=e.dataTransfer&&e.dataTransfer.getData('text/plain');
       var c=course(cid);
       if(!c)return;
-      if(!inSemester(date)){toast('Cette date est en dehors du semestre');return;}
+      if(!inSemester(date)){toast('Cette date est en dehors de l\'année universitaire');return;}
       placeCourse(c.id,date,timeFromY(col,e.clientY,c.dur),armed===c.id?armWeeksTxt:'');
     });
     var lay=layout(list);
@@ -1334,7 +1347,7 @@ function renderGrid(){
       var tip=titleOf(s)+'\n'+DAYS[day]+' '+shortDate(s.date)+' '+fmt(s.start)+'-'+fmt(s.start+s.dur)+
         (gl?'\nGroupes : '+gl:'')+(tl?'\nEnseignants : '+tl:'')+(rm?'\nSalle : '+rm:'')+(s.note?'\n'+s.note:'');
       if(s.tpl&&s.edited)tip+='\n\nModifiée par rapport à la semaine type';
-      if(bad[s.id])tip+='\n\nATTENTION : conflit, capacité dépassée ou hors semestre';
+      if(bad[s.id])tip+='\n\nATTENTION : conflit, capacité dépassée ou hors année universitaire';
       var ev=h('div',{
         class:'ev'+(bad[s.id]?' bad':''),
         style:'top:'+Math.round((s.start-t0)*PPM)+'px;height:'+h0+'px;left:calc('+(L.lane*100/L.lanes)+'% + 1px);width:calc('+(100/L.lanes)+'% - 3px);background:'+c[0]+';border-left-color:'+c[1]+';color:'+c[1],
@@ -1424,7 +1437,7 @@ function placeCourse(cid,date,start,weeksTxt){
     wk=weekDates(weeksTxt,c.sem,date);
     if(wk.errors.length){toast(wk.errors[0]);return;}
     dates=wk.dates;
-    if(!dates.length){toast('Aucune des semaines indiquées ne donne une date dans le semestre');return;}
+    if(!dates.length){toast('Aucune des semaines indiquées ne donne une date dans l\'année universitaire');return;}
   }
   if(dates.length>left){
     toast(dates.length+' semaines indiquées, mais il ne reste que '+left+' séance'+(left>1?'s':'')+' à placer pour « '+c.name+' ».');
@@ -1527,7 +1540,7 @@ function switchSemester(id){
   if(!semOf(id))return;
   S.current=id;armed=null;
   var t=todayStr(),m=SEM();
-  S.view.week=inSemester(t)?mondayOf(t):mondayOf(m.start);
+  S.view.week=inSemester(t)?mondayOf(t):mondayOf(eff(m).start);
   fixWeek(S);save();renderAll();
 }
 
@@ -1542,7 +1555,7 @@ function fillItemSelect(){
 }
 
 function weekIdx(monday){
-  return Math.round((pd(monday)-pd(mondayOf(SEM().start)))/604800000)+1;
+  return Math.round((pd(monday)-pd(mondayOf(eff(SEM()).start)))/604800000)+1;
 }
 
 function syncToolbar(){
@@ -1551,10 +1564,10 @@ function syncToolbar(){
   $('#wtype').textContent=typeView?'Retour au calendrier':'Semaine type';
   $('#mode').value=v.mode;
   var sm=SEM();
-  $('#semname').textContent='Semestre '+sm.name+' : du '+fullDate(sm.start)+' au '+fullDate(sm.end);
+  var ye=eff(sm);$('#semname').textContent='Semestre '+sm.name+' · année universitaire du '+fullDate(ye.start)+' au '+fullDate(ye.end);
   $('#sem').value=sm.id;
   renderTeacherBar();renderRoomBar();
-  var first=mondayOf(sm.start),last=mondayOf(sm.end);
+  var ef=eff(sm),first=mondayOf(ef.start),last=mondayOf(ef.end);
   $('#wlabel').textContent='Semaine '+isoWeek(v.week)+' · '+shortDate(v.week)+' au '+shortDate(addDays(v.week,v.days-1))+' (n° '+weekIdx(v.week)+'/'+weekIdx(last)+' du semestre)';
   $('#prev').disabled=v.week<=first;
   $('#next').disabled=v.week>=last;
@@ -1587,7 +1600,7 @@ function initToolbar(){
   $('#add').addEventListener('click',function(){
     if(typeView){openTplEditor(null);return;}
     var d=S.view.week;
-    if(!inSemester(d))d=SEM().start;
+    if(!inSemester(d))d=eff(SEM()).start;
     openEditor(newDraft(d,S.view.startH*60+60));
   });
   $('#cfg').addEventListener('click',function(){openConfig('semester');});
@@ -1695,7 +1708,7 @@ function openEditor(slot,pre){
       var dates=useWeeks?wk.dates:[d.date];
       if(useWeeks){
         wk.errors.forEach(function(e){msgs.push(e);});
-        if(wk.dropped)msgs.push(wk.dropped+' semaine(s) ignorée(s) : le jour choisi tombe hors du semestre');
+        if(wk.dropped)msgs.push(wk.dropped+' semaine(s) ignorée(s) : le jour choisi tombe hors de l\'année universitaire');
         info.textContent+=' '+dates.length+' séance(s) seront créées, le '+DAYS[wd(d.date)].toLowerCase()+'.';
         if(c&&dates.length>remaining(c))msgs.push(dates.length+' semaines choisies pour '+Math.max(0,remaining(c))+' séance(s) restante(s) : retire des semaines');
       }
@@ -1800,7 +1813,7 @@ function openEditor(slot,pre){
         var wk=weekDates(d.weeksTxt,d.sem,d.date);
         if(wk.errors.length){toast(wk.errors[0]);return;}
         dates=wk.dates;
-        if(!dates.length){toast('Aucune des semaines indiquées ne donne une date dans le semestre');return;}
+        if(!dates.length){toast('Aucune des semaines indiquées ne donne une date dans l\'année universitaire');return;}
       }
       if(c&&dates.length>remaining(c)){
         toast(dates.length+' semaines choisies, mais il ne reste que '+remaining(c)+' séance(s) pour « '+c.name+' ».');
