@@ -177,3 +177,19 @@ textarea{width:100%;min-height:200px;border:1px solid var(--line);border-radius:
 
 .news{margin:8px 0 4px;padding-left:20px;line-height:1.5}
 .news li{margin-bottom:6px}
+
+.tw-ev .ln{display:block}
+.tw-ev .ph{font-style:italic;opacity:.65}
+.tbar .tb.room{display:inline-block;padding:3px 10px;border:1px solid var(--line);border-radius:14px;font-size:13px;background:#fff;cursor:grab}
+#rbar[hidden]{display:none}
+@media print{#rbar{display:none!important}}
+#pal .palsec{margin:8px 0}
+#pal .lb{font-weight:600;font-size:13px;color:var(--muted);margin-bottom:4px}
+#pal .palrow{display:flex;flex-wrap:wrap;gap:5px}
+.pchip{display:inline-block;padding:3px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff;cursor:grab;user-select:none}
+.pchip.lang{font-weight:600}
+.pchip.teacher{border-radius:14px}
+.pchip.room{border-radius:14px;background:#f4f6fb}
+.pchip.group{background:#fafafa}
+.pchip:active{cursor:grabbing}
+@media print{#pal{display:none!important}}
