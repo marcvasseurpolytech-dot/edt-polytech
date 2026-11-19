@@ -811,6 +811,33 @@ function renderTeacherBar(){
     bar.appendChild(h('span',{class:'cap'},(typeView?'Semaine type de ':'Semaine de ')+sel.name+' : '+n+' séance'+(n>1?'s':'')+(n?'. Salle et groupes sur chaque bloc.':'.')));
   }
 }
+// Passage a l'annee universitaire suivante : la semaine type est reprise, decalee d'un an, au meme numero de semaine ISO
+function nextYear(){
+  var yb=yearBounds(),y0=+yb.start.slice(0,4),lab=y0+'-'+(y0+1),lab2=(y0+1)+'-'+(y0+2);
+  var nTpl=S.template.length,nSlots=S.slots.length;
+  confirmBox('Passer à l\'année universitaire '+lab2+' ? La semaine type ('+nTpl+' bloc'+(nTpl>1?'s':'')+') est reprise telle quelle : mêmes spécialités, enseignants, salles et groupes, avec les mêmes numéros de semaine, en changeant seulement l\'année. Les dates de tous les semestres avancent d\'un an. Le semainier de '+lab+' ('+nSlots+' séance'+(nSlots>1?'s':'')+') est retiré du calendrier : une copie de sauvegarde est téléchargée d\'abord. Ensuite tu ajustes les blocs en les glissant, puis « Générer le semainier ».',function(){
+    try{
+      var blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});
+      var l=h('a',{href:URL.createObjectURL(blob),download:'emplois-du-temps-'+lab+'.json'});
+      document.body.appendChild(l);l.click();l.remove();
+    }catch(e){}
+    var shift=function(d){return addDays(d,364);};
+    S.semesters.forEach(function(m){m.start=shift(m.start);m.end=shift(m.end);});
+    var ny=yearBounds(),byNum={};
+    var cur=mondayOf(ny.start),last=mondayOf(ny.end);
+    while(cur<=last){byNum[isoWeek(cur)]=cur;cur=addDays(cur,7);}
+    var lost=0;
+    S.template.forEach(function(t){
+      var out=[];
+      t.weeks.forEach(function(m){var n=byNum[isoWeek(m)];if(n)out.push(n);else lost++;});
+      t.weeks=out.filter(function(m,i,ar){return ar.indexOf(m)===i;}).sort();
+    });
+    S.slots=[];S.skips=[];
+    S.view.week=mondayOf(ny.start);fixWeek(S);
+    save();renderAll();
+    toast('Année '+lab2+' prête : semaine type reprise'+(lost?' ('+lost+' semaine(s) sans équivalent ignorée(s))':'')+'. Ajuste les blocs puis génère le semainier.');
+  },'Passer à '+lab2);
+}
 function openBulkWeeks(){
   var sm=SEM(),f={lang:'',group:'',txt:''};
   var info=h('div',{class:'hint'}),warn=h('div',{class:'hint'});
@@ -1102,6 +1129,7 @@ function renderTypeWeek(){
         ?(pn?pn+' changement'+(pn>1?'s':'')+' à répercuter dans le semainier ('+pd0.created+' à créer, '+pd0.updated+' à mettre à jour, '+pd0.removed+' à retirer).':'Le semainier est à jour avec la semaine type.')
         :'Commence par construire la semaine type (glisse un cours de la liste dans la grille), puis génère le semainier.'),
       h('span',{class:'sp'}),
+      h('button',{onclick:nextYear,title:'Reprendre la semaine type pour l\'année universitaire suivante'},'Année universitaire suivante'),
       h('button',{class:'primary',onclick:generateWeekly,disabled:!pn},'Générer le semainier'));
     root.appendChild(bar);
     root.appendChild(h('p',{class:'hint tw-help'},'Glisse une spécialité depuis la palette de droite vers un jour, une salle et une heure, puis un enseignant, une salle et des groupes sur le bloc. Glisse un bloc pour le déplacer. Clique sur un bloc pour modifier ses semaines.'));
