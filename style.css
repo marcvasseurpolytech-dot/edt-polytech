@@ -196,3 +196,11 @@ textarea{width:100%;min-height:200px;border:1px solid var(--line);border-radius:
 #pal .palrow.grp{align-items:center;margin-bottom:4px}#pal .gpk{font-weight:600;font-size:12px;min-width:48px;color:var(--muted)}
 body.typeweek aside.admin-only{display:flex;flex-direction:column}
 body.typeweek aside #courses{order:-1}
+.tw-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 12px}
+.tw-tab{padding:6px 16px;border-radius:8px;font-weight:600}
+.tw-tab.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.tw-tab .n{display:inline-block;margin-left:6px;font-size:12px;opacity:.8}
+.tw-part{margin:14px 0 4px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.tw-day:not(.cur){display:none}
+@media print{.tw-tabs{display:none!important}.tw-day:not(.cur){display:block!important}}
+.tw-tab.dropok{outline:2px dashed var(--accent)}
