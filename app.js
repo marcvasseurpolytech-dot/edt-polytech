@@ -2108,15 +2108,17 @@ function findByName(kind,name,extra){
 }
 function importPdfEdt(){
   fetch('pdf-edt.json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
-    var base=SEM(),sem={id:uid(),name:d.name,start:base.start,end:base.end};
-    var nm0=d.name,n=2;
-    while(S.semesters.some(function(x){return x.name===nm0;}))nm0=d.name+' '+(n++);
-    sem.name=nm0;
-    S.semesters.push(sem);
+    var sem=S.semesters.filter(function(x){return x.name==='S5';})[0]||SEM(),prev=S.current;
     var langColor={'Anglais':'bleu','Allemand':'orange','Espagnol':'rose','Booster':'violet','Anglais renforcé':'turquoise'};
-    var weeks=semWeeks(sem.id),cnt=0;
+    var weeks=semWeeks(sem.id),cnt=0,skipped=0;
     d.blocks.forEach(function(b){
-      var lid=findByName('languages',b.spe,{color:langColor[b.spe]||'gris'});
+      var ln=b.spe;
+      // Langues deja creees par ta collegue pour ces cases du PDF
+      if(b.spe==='Booster')ln=b.year==='TC3'?'Booster 3':'Booster 4 / GD2 esp';
+      else if(b.year==='GD1')ln='GD1 all/esp';
+      else if(b.year==='GD2')ln=b.spe==='Espagnol'?'Booster 4 / GD2 esp':'GD2 all';
+      if(!S.languages.some(function(l){return l.name.toLowerCase()===ln.toLowerCase();}))ln=b.spe;
+      var lid=findByName('languages',ln,{color:langColor[b.spe]||'gris'});
       var t={id:uid(),sem:sem.id,course:'',lang:lid,year:'',level:'',groups:[],
         teachers:b.profs.map(function(p){return findByName('teachers',p);}),
         room:b.room?findByName('rooms',b.room,{cap:0}):'',room2:b.room2?findByName('rooms',b.room2,{cap:0}):'',
@@ -2126,13 +2128,16 @@ function importPdfEdt(){
       t.groups=[groupByName(b.grp)];
       if(b.weeks==='all')t.weeks=weeks.map(function(w){return w.monday;}).filter(function(m){var dt=addDays(m,b.day);return !ferie(dt)&&!vacation(dt);});
       else t.weeks=weeks.filter(function(w){return b.weeks.indexOf(w.num)>=0&&w.monday>=sem.start;}).map(function(w){return w.monday;});
+      var dup=S.template.some(function(o){return o.sem===sem.id&&o.day===t.day&&o.start===t.start&&o.dur===t.dur&&o.room===t.room&&o.room2===t.room2&&o.lang===t.lang&&o.year===t.year&&o.level===t.level&&JSON.stringify(o.teachers)===JSON.stringify(t.teachers);});
+      if(dup){skipped++;return;}
       S.template.push(t);cnt++;
     });
     S.seeded=true;S.seededRes=true;
-    S.current=sem.id;twDay=0;
+    S.current=sem.id;
     var res=autoSync();
+    S.current=prev;
     fixWeek(S);save();renderAll();closeModal();
-    toast(cnt+' blocs importés dans le semestre « '+sem.name+' ». '+res.n+' séances générées dans le semainier. Rien n\'a été modifié dans les autres semestres.');
+    toast(cnt+' blocs ajoutés au semestre '+sem.name+(skipped?' ('+skipped+' déjà présents, ignorés)':'')+', '+res.n+' séances générées. Choisis '+sem.name+' en haut pour les voir. Les semestres pairs ne sont pas touchés.');
   }).catch(function(){toast('Import impossible : fichier du PDF introuvable.');});
 }
 
@@ -2180,8 +2185,8 @@ function semesterTab(){
   nin.addEventListener('keydown',function(e){if(e.key==='Enter')add();});
   box.appendChild(h('div',{class:'rrow add'},nin,h('button',{onclick:add},'+ Ajouter')));
   box.appendChild(h('div',{class:'rrow'},h('button',{onclick:function(){
-    confirmBox('Importer l\'EDT du PDF « Langues semestre impair » (lundi à vendredi) dans un NOUVEAU semestre ? Les semestres existants ne sont pas modifiés. Les enseignants, salles, langues et groupes manquants sont ajoutés.',importPdfEdt,'Importer',function(){openConfig('semester');});
-  }},'Importer l\'EDT du PDF (nouveau semestre)')));
+    confirmBox('Ajouter l\'EDT du PDF « Langues semestre impair » (lundi à vendredi) au semestre S5 ? Les blocs sont ajoutés sans rien supprimer ni modifier ; les semestres pairs ne sont pas touchés. Les enseignants, salles, langues et groupes manquants sont créés, les existants réutilisés.',importPdfEdt,'Importer',function(){openConfig('semester');});
+  }},'Ajouter l\'EDT du PDF au semestre S5')));
 
   var days=h('select',{},h('option',{value:'5'},'Lundi au vendredi'),h('option',{value:'6'},'Lundi au samedi'));
   days.value=String(v.days);
