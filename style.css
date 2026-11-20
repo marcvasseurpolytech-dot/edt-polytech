@@ -204,3 +204,16 @@ body.typeweek aside #courses{order:-1}
 .tw-day:not(.cur){display:none}
 @media print{.tw-tabs{display:none!important}.tw-day:not(.cur){display:block!important}}
 .tw-tab.dropok{outline:2px dashed var(--accent)}
+.pdfgrid{display:grid;gap:0;border:1px solid #333;background:#fff;position:relative}
+.pg-h{display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;border:1px solid #333;background:#fff}
+.pg-t{display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;border:1px solid #333}
+.pg-c{border:1px solid #bbb;cursor:pointer;min-height:0}
+.pg-c:hover{background:#f6f9ff}
+.pg-c.dropok{background:#e3efff;outline:2px dashed var(--accent);outline-offset:-3px}
+.ev.pdfblk{position:relative!important;left:auto!important;top:auto!important;width:auto!important;height:auto!important;margin:1px;z-index:2;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;border:1px solid #333;border-left-width:1px;padding:2px 3px;overflow:hidden;line-height:1.25}
+.ev.pdfblk b{font-size:13px}
+.ev.pdfblk .ln{display:block;font-size:12.5px}
+.ev.pdfblk .ln.sm{font-size:10.5px;opacity:.8;margin-top:2px}
+.ev.pdfblk .ln.ph{font-style:italic;opacity:.7}
+@media print{.pg-c{cursor:default}.pdfgrid{border-color:#000}}
+.ev.pdfblk .ln.sm{white-space:normal;overflow-wrap:anywhere}

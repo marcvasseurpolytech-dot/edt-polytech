@@ -294,7 +294,7 @@ function normalize(o){
       tpl:typeof s.tpl==='string'?s.tpl:'',tw:validDate(s.tw)?s.tw:'',edited:!!s.edited,lang:typeof s.lang==='string'?s.lang:''};
   });
   o.template=(Array.isArray(o.template)?o.template:[]).filter(function(t){return t&&typeof t==='object';}).map(function(t){
-    return {id:t.id||uid(),sem:validSem(t.sem),course:t.course||'',lang:typeof t.lang==='string'?t.lang:'',groups:arr(t.groups),teachers:arr(t.teachers),room:t.room||'',
+    return {id:t.id||uid(),sem:validSem(t.sem),course:t.course||'',lang:typeof t.lang==='string'?t.lang:'',year:typeof t.year==='string'?t.year:'',level:typeof t.level==='string'?t.level:'',groups:arr(t.groups),teachers:arr(t.teachers),room:t.room||'',
       day:clamp(parseInt(t.day,10)||0,0,5),start:clamp(parseInt(t.start,10)||0,0,23*60+45),dur:Math.max(15,parseInt(t.dur,10)||120),
       weeks:arr(t.weeks).filter(validDate)};
   });
@@ -738,7 +738,11 @@ function tplIssues(){
 function newBlank(day,room,start,extra){
   var t={id:uid(),sem:SEM().id,course:'',lang:'',groups:[],teachers:[],room:room||'',day:day,start:start,dur:120,
     weeks:semWeeks(SEM().id).map(function(w){return w.monday;}).filter(function(m){var dt=addDays(m,day);return !ferie(dt)&&!vacation(dt);})};
-  Object.assign(t,extra||{});
+  var yl={};extra=extra||{};
+  if(extra.year!==undefined){yl.year=extra.year;delete extra.year;}
+  if(extra.level!==undefined){yl.level=extra.level;delete extra.level;}
+  Object.assign(t,extra);
+  if(yl.year!==undefined||yl.level!==undefined)setYL(t,yl);
   S.template.push(t);
   afterTplChange(t,'Bloc créé (2 h, toutes les semaines hors vacances et jours fériés). Clique dessus pour régler les semaines.');
 }
@@ -764,18 +768,59 @@ function moveTpl(t,day,room,start){
   t.day=day;t.start=start;t.room=room;
   afterTplChange(t,'Séance type déplacée.');
 }
-function dropOnColumn(e,col,day,room,T0,T1){
+// Creneaux du PDF : lignes d'une heure (les cours de 2 h occupent deux lignes consecutives)
+var MORNING_ROWS=[480,540,615,675];
+function afternoonRows(day){
+  if(day===0)return [825,885,945,1020,1095];
+  if(day===4)return [810,870,960,1020];
+  if(day===1||day===5)return [825,885,960,1020];
+  return [825,885,960,1020,1095];
+}
+function rowLabel(m){var hh=Math.floor(m/60),mm=m%60;return hh+'h'+(mm?pad(mm):'');}
+function yearList(){
+  var out=[];
+  S.groups.forEach(function(g){var m=/^(.+?)\s+Gr\s*\d+$/i.exec(g.name),y=m?m[1]:g.name;if(out.indexOf(y)<0)out.push(y);});
+  return out;
+}
+function levelList(){
+  var out=['Gr1','Gr2','Gr3','Gr4'];
+  S.groups.forEach(function(g){var m=/\s(Gr\s*\d+)$/i.exec(g.name);if(m){var l=m[1].replace(/\s+/g,'');l=l.charAt(0).toUpperCase()+l.slice(1).toLowerCase();if(out.indexOf(l)<0)out.push(l);}});
+  return out;
+}
+function tplYL(t){
+  if(t.year||t.level)return {year:t.year||'',level:t.level||''};
+  var g=t.groups.length===1?S.groups.filter(function(x){return x.id===t.groups[0];})[0]:null,m=g&&/^(.+?)\s+(Gr\s*\d+)$/i.exec(g.name);
+  return m?{year:m[1],level:m[2].replace(/\s+/g,'')}:{year:'',level:''};
+}
+function groupByName(name){
+  var k=name.toLowerCase(),g=S.groups.filter(function(x){return x.name.toLowerCase()===k;})[0];
+  if(!g){g={id:uid(),name:name,size:0};S.groups.push(g);}
+  return g.id;
+}
+// Annee (TC3, TC4...) et niveau (Gr1...) d'un bloc : les groupes du bloc en sont deduits
+function setYL(t,yl){
+  var cur=tplYL(t);
+  t.year=yl.year!==undefined?yl.year:cur.year;
+  t.level=yl.level!==undefined?yl.level:cur.level;
+  if(!t.year)return;
+  if(t.level)t.groups=[groupByName(t.year+' '+t.level)];
+  else{
+    var pre=t.year.toLowerCase()+' ',all=S.groups.filter(function(g){return g.name.toLowerCase().indexOf(pre)===0;}).map(function(g){return g.id;});
+    t.groups=all.length?all:[groupByName(t.year)];
+  }
+}
+function dropOnCell(e,day,room,start){
   e.preventDefault();
   if(!CAN_EDIT)return;
   var txt=(e.dataTransfer&&e.dataTransfer.getData('text/plain'))||'';
-  var r=col.getBoundingClientRect(),off=(curDrag&&curDrag.kind==='tpl')?curDrag.offY:0;
-  var start=clamp(T0+Math.round((e.clientY-r.top-off)/PT/SNAP)*SNAP,T0,Math.max(T0,T1-120));
   if(txt.indexOf('tpl:')===0){
     var t=S.template.filter(function(x){return x.id===txt.slice(4);})[0];
-    if(t)moveTpl(t,day,room,clamp(T0+Math.round((e.clientY-r.top-off)/PT/SNAP)*SNAP,0,1440));
+    if(t)moveTpl(t,day,room,start);
     return;
   }
   if(txt.indexOf('lang:')===0){newBlank(day,room,start,{lang:txt.slice(5)});return;}
+  if(txt.indexOf('year:')===0){newBlank(day,room,start,{year:txt.slice(5)});return;}
+  if(txt.indexOf('level:')===0){newBlank(day,room,start,{level:txt.slice(6)});return;}
   if(txt.indexOf('teacher:')===0){newBlank(day,room,start,{teachers:[txt.slice(8)]});return;}
   if(txt.indexOf('room:')===0){newBlank(day,txt.slice(5),start);return;}
   if(txt.indexOf('group:')===0){newBlank(day,room,start,{groups:[txt.slice(6)]});return;}
@@ -894,7 +939,7 @@ function renderRoomBar(){
   card.hidden=!on;
   if(!on)return;
   card.appendChild(h('h2',{},'Blocs à glisser'));
-  card.appendChild(h('p',{class:'hint'},'Choisis le jour en haut (une page par jour, avec matin et après-midi). Glisse une spécialité à l\'heure voulue, dans la colonne de la salle, puis un enseignant, puis une salle sur le bloc, dans l\'ordre que tu veux. Un bloc dure 2 h. Le nombre de séances de chaque cours se règle dans Configuration, avant de placer.'));
+  card.appendChild(h('p',{class:'hint'},'Choisis le jour en haut (une page par jour, avec matin et après-midi). Glisse une spécialité dans la case de la salle et de l\'heure voulues, puis l\'année (TC3, TC4...), le niveau (Gr1...), l\'enseignant et au besoin une autre salle sur le bloc, dans l\'ordre que tu veux. Un bloc dure 2 h. Le nombre de séances de chaque cours se règle dans Configuration, avant de placer.'));
   card.appendChild(h('button',{onclick:openBulkWeeks,title:'Régler les semaines de tous les blocs d\'une spécialité et d\'un groupe'},'Semaines de plusieurs blocs'));
   function sec(title,kind,items,cls,label){
     var box=h('div',{class:'palsec'},h('div',{class:'lb'},title));
@@ -909,30 +954,11 @@ function renderRoomBar(){
     box.appendChild(row);card.appendChild(box);
   }
   sec('Spécialités','lang',S.languages.map(function(l){var c=COLORS[l.color]||COLORS.gris;return {id:l.id,name:l.name,style:'background:'+c[0]+';border-left:4px solid '+c[1]+';color:'+c[1]};}),'','Glisse cette spécialité dans la grille ou sur un bloc');
+  sec('Années','year',yearList().map(function(y){return {id:y,name:y};}),'','Glisse cette année (promotion) sur un bloc');
+  sec('Niveaux de groupe (Gr1 = le plus fort)','level',levelList().map(function(l){return {id:l,name:l};}),'','Glisse ce niveau sur un bloc');
   var key=function(t){return t.name.replace(/^\S+\s+/,'').toLowerCase();};
   sec('Enseignants','teacher',S.teachers.slice().sort(function(a,b){return key(a)<key(b)?-1:key(a)>key(b)?1:0;}).map(function(t){return {id:t.id,name:t.name};}),'','Glisse cet enseignant sur un bloc');
   sec('Salles','room',S.rooms.map(function(r){return {id:r.id,name:r.name};}),'','Glisse cette salle sur un bloc');
-  (function(){
-    var box=h('div',{class:'palsec'},h('div',{class:'lb'},'Groupes (Gr1 = niveau le plus fort)')),order=[],by={};
-    S.groups.forEach(function(g){
-      var m=/^(.+?)\s+(Gr\s*\d+)$/i.exec(g.name),pk=m?m[1]:'Autres';
-      if(!by[pk]){by[pk]=[];order.push(pk);}
-      by[pk].push({g:g,short:m?m[2]:g.name});
-    });
-    order.forEach(function(pk){
-      var row=h('div',{class:'palrow grp'});
-      if(pk!=='Autres')row.appendChild(h('span',{class:'gpk'},pk));
-      by[pk].sort(function(x,y){return x.short<y.short?-1:x.short>y.short?1:0;}).forEach(function(o){
-        var b=h('span',{class:'pchip group',draggable:'true',title:o.g.name+' : glisse ce groupe sur un bloc'},pk==='Autres'?o.g.name:o.short);
-        b.addEventListener('dragstart',function(e){curDrag={kind:'group'};e.dataTransfer.setData('text/plain','group:'+o.g.id);e.dataTransfer.effectAllowed='copy';});
-        b.addEventListener('dragend',function(){curDrag=null;clearDrop();});
-        row.appendChild(b);
-      });
-      box.appendChild(row);
-    });
-    if(!S.groups.length)box.appendChild(h('span',{class:'hint'},'Aucun (Configuration).'));
-    card.appendChild(box);
-  })();
 }
 function clearDrop(){var l=document.querySelectorAll('.dropok');for(var i=0;i<l.length;i++)l[i].classList.remove('dropok');}
 function typeBlocks(){
@@ -1081,6 +1107,8 @@ function openTplEditor(t,pre){
     var others=c?placedPlan(c.id,t?t.id:null):0;
     if(c&&others+want.length>c.sessions){toast('Trop de séances : '+(others+want.length)+' pour '+c.sessions+' prévues pour « '+c.name+' ».');return;}
     var rec=t||{id:uid()};
+    var gOld=JSON.stringify(rec.groups||[]),gNew=JSON.stringify(d.groups);
+    if(gOld!==gNew){rec.year='';rec.level='';}
     Object.assign(rec,{sem:d.sem,course:d.course,lang:d.course?'':(d.lang||''),groups:d.groups.slice(),teachers:d.teachers.slice(),room:d.room||'',day:d.day,start:d.start,dur:d.end-d.start,weeks:pw.mondays.slice().sort()});
     if(isNew)S.template.push(rec);
     if(rec.sem!==S.current){S.current=rec.sem;S.view.week=mondayOf(eff(SEM()).start);armed=null;fixWeek(S);}
@@ -1115,6 +1143,70 @@ function openTplEditor(t,pre){
     warn,actions));
   refresh();
 }
+function buildTplBlock(a,badIds){
+  var s0=a.slot,c=slotColor(s0),yl=tplYL(a.t);
+  var gl=s0.groups.map(function(g){return nm('groups',g);}).join(', ');
+  var tl=s0.teachers.map(function(t){return nm('teachers',t);}).join(', ');
+  var wk=fmtWeeks(a.mondays,S.current),lg=slotLang(s0);
+  var base=(!s0.course&&!s0.lang&&CAN_EDIT)?'Spé à choisir':titleOf(s0);
+  var spe=base+((!s0.course&&yl.level&&(s0.lang||s0.course))?'-'+yl.level.replace(/^Gr/i,'G'):'');
+  var tip=titleOf(s0)+(lg&&lg.name!==titleOf(s0)?' ('+lg.name+')':'')+'\n'+fmt(a.start)+'-'+fmt(a.start+a.dur)+(gl?'\nGroupes : '+gl:'')+(tl?'\nEnseignants : '+tl:'')+'\nSemaines : '+wk;
+  if(badIds[a.id])tip+='\n\nATTENTION : conflit ou capacité dépassée';
+  var yearTxt=yl.year||(gl&&!yl.year?gl:'');
+  var ev=h('div',{
+    class:'ev tw-ev pdfblk'+(CAN_EDIT?' tw-edit':'')+(badIds[a.id]?' bad':''),
+    style:'background:'+c[0]+';border-left-color:'+c[1]+';color:'+c[1],title:tip,draggable:CAN_EDIT?'true':'false'
+  },
+    h('b',{},(badIds[a.id]?'⚠ ':'')+(yearTxt||(CAN_EDIT?'Année à choisir':''))),
+    h('span',{class:'ln sp1'},spe),
+    (tl||CAN_EDIT)?h('span',{class:'ln'+(tl?'':' ph')},tl||'Prof à choisir'):null,
+    h('span',{class:'ln sm'},(a.room?'Salle : '+nm('rooms',a.room)+' · ':'')+fmt(a.start)+'-'+fmt(a.start+a.dur)+' · sem. '+wk));
+  ev.addEventListener('click',function(e){e.stopPropagation();if(CAN_EDIT)openTplEditor(a.t);});
+  if(!CAN_EDIT)return ev;
+  ev.addEventListener('dragstart',function(e){
+    curDrag={kind:'tpl',offY:0};
+    e.dataTransfer.setData('text/plain','tpl:'+a.t.id);e.dataTransfer.effectAllowed='move';
+  });
+  ev.addEventListener('dragend',function(){curDrag=null;clearDrop();});
+  ev.addEventListener('drop',function(e){
+    var txt=(e.dataTransfer&&e.dataTransfer.getData('text/plain'))||'';
+    if(txt.indexOf('tpl:')===0)return;
+    e.preventDefault();e.stopPropagation();clearDrop();
+    if(txt.indexOf('teacher:')===0){
+      var tid=txt.slice(8);
+      if(a.t.teachers.indexOf(tid)>=0){toast(nm('teachers',tid)+' est déjà sur cette séance.');return;}
+      a.t.teachers.push(tid);
+      afterTplChange(a.t,nm('teachers',tid)+' ajouté à la séance.');
+    }else if(txt.indexOf('room:')===0){
+      a.t.room=txt.slice(5);
+      afterTplChange(a.t,'Salle '+nm('rooms',a.t.room)+' choisie.');
+    }else if(txt.indexOf('lang:')===0){
+      a.t.lang=txt.slice(5);a.t.course='';
+      afterTplChange(a.t,'Spécialité : '+(lang(a.t.lang)?lang(a.t.lang).name:'')+'.');
+    }else if(txt.indexOf('year:')===0){
+      setYL(a.t,{year:txt.slice(5)});
+      afterTplChange(a.t,'Année '+a.t.year+(a.t.level?' '+a.t.level:'')+'.');
+    }else if(txt.indexOf('level:')===0){
+      var cy=tplYL(a.t);
+      if(!cy.year){a.t.level=txt.slice(6);afterTplChange(a.t,'Niveau '+a.t.level+' : choisis maintenant l\'année.');return;}
+      setYL(a.t,{level:txt.slice(6)});
+      afterTplChange(a.t,'Groupe '+a.t.year+' '+a.t.level+'.');
+    }else if(txt.indexOf('group:')===0){
+      var gid=txt.slice(6);
+      if(a.t.groups.indexOf(gid)>=0){toast(nm('groups',gid)+' est déjà sur cette séance.');return;}
+      a.t.groups.push(gid);
+      afterTplChange(a.t,nm('groups',gid)+' ajouté à la séance.');
+    }else{
+      var dc=course(txt);
+      if(!dc||dc.sem!==a.t.sem)return;
+      a.t.course=dc.id;a.t.lang='';a.t.year='';a.t.level='';a.t.groups=dc.groups.slice();
+      if(!a.t.teachers.length)a.t.teachers=dc.teachers.slice();
+      if(!a.t.room)a.t.room=dc.room||'';
+      afterTplChange(a.t,'Spécialité remplacée par '+dc.name+'.');
+    }
+  });
+  return ev;
+}
 function renderTypeWeek(){
   var root=$('#tt');root.replaceChildren();
   var sm=SEM(),agg=typeBlocks();
@@ -1134,7 +1226,7 @@ function renderTypeWeek(){
       h('button',{onclick:nextYear,title:'Reprendre la semaine type pour l\'année universitaire suivante'},'Année universitaire suivante'),
       h('button',{class:'primary',onclick:generateWeekly,disabled:!pn},'Générer le semainier'));
     root.appendChild(bar);
-    root.appendChild(h('p',{class:'hint tw-help'},'Choisis un jour avec les onglets, puis glisse une spécialité depuis la palette de droite vers le matin ou l\'après-midi, dans la colonne d\'une salle, puis un enseignant, une salle et des groupes sur le bloc. Glisse un bloc pour le déplacer. Clique sur un bloc pour modifier ses semaines.'));
+    root.appendChild(h('p',{class:'hint tw-help'},'Choisis un jour avec les onglets (comme les pages de ton PDF), puis glisse une spécialité de la palette de droite dans la case d\'une salle et d\'une heure. Ajoute ensuite l\'année, le niveau Gr1 à Gr4 et l\'enseignant sur le bloc. Glisse un bloc pour le déplacer, clique dessus pour régler ses semaines.'));
   }
   var hasAny=S.template.some(function(t){return t.sem===S.current;});
   if(!agg.length){
@@ -1178,99 +1270,44 @@ function renderTypeWeek(){
   for(d=0;d<nd;d++){
     var items=agg.filter(function(a){return a.day===d;});
     var box=h('section',{class:'tw-day'+(d===twDay?' cur':'')},h('h2',{},DAYS[d]+' · semaine type '+sm.name));
-    var parts=[{name:'Matin',T0:M0,T1:M1,list:items.filter(function(a){return a.start<M1;})},
-               {name:'Après-midi',T0:A0,T1:A1,list:items.filter(function(a){return a.start>=M1;})}];
+    var parts=[{name:'Matin',rows:MORNING_ROWS,list:items.filter(function(a){return a.start<780;})},
+               {name:'Après-midi',rows:afternoonRows(d),list:items.filter(function(a){return a.start>=780;})}];
     parts.forEach(function(pt){
       if(!CAN_EDIT&&!pt.list.length)return;
-      var T0=pt.T0,T1=pt.T1,list=pt.list,day=d;
-      var H=Math.round((T1-T0)*PT);
-      var roomIds=S.rooms.map(function(r){return r.id;});
-      if(list.some(function(a){return !a.room||roomIds.indexOf(a.room)<0;})||!roomIds.length)roomIds.push('');
-      if(!CAN_EDIT)roomIds=roomIds.filter(function(rid){return list.some(function(a){return rid?a.room===rid:(!a.room||S.rooms.every(function(r){return r.id!==a.room;}));});});
-      var gtpl='52px repeat('+roomIds.length+',minmax(130px,1fr))',minW=52+roomIds.length*130;
-      var heads=h('div',{class:'heads tw-heads',style:'grid-template-columns:'+gtpl+';min-width:'+minW+'px'},h('div',{class:'gut'}));
-      roomIds.forEach(function(rid){heads.appendChild(h('div',{class:'dh'},rid?nm('rooms',rid):'Sans salle'));});
-      var gut=h('div',{class:'gut',style:'height:'+H+'px'});
-      var hr;
-      for(hr=Math.ceil(T0/60);hr<=T1/60;hr++)gut.appendChild(h('div',{class:'hl',style:'top:'+Math.round((hr*60-T0)*PT)+'px'},pad(hr)+':00'));
-      var body=h('div',{class:'body',style:'grid-template-columns:'+gtpl+';height:'+H+'px;min-width:'+minW+'px;--hh:'+(60*PT)+'px'},gut);
-      roomIds.forEach(function(rid){
-        var col=h('div',{class:'col',style:'height:'+H+'px'});
-        col.addEventListener('click',function(e){
-          if(!CAN_EDIT||e.target!==col)return;
-          var r=col.getBoundingClientRect();
-          var m=clamp(T0+Math.floor((e.clientY-r.top)/PT/SNAP)*SNAP,T0,Math.max(T0,T1-120));
-          var ac=armed?course(armed):null;
-          openTplEditor(null,tplPreFromCourse(ac&&ac.sem===SEM().id?ac:null,day,rid,m));
+      var day=d,rows=pt.rows,rooms=S.rooms.map(function(r){return r.id;});
+      if(pt.list.some(function(a){return !a.room||rooms.indexOf(a.room)<0;})||!rooms.length)rooms.push('');
+      var grid=h('div',{class:'pdfgrid',style:'grid-template-columns:56px repeat('+rooms.length+',minmax(128px,1fr));grid-template-rows:30px repeat('+rows.length+',70px);min-width:'+(56+rooms.length*128)+'px'});
+      grid.appendChild(h('div',{class:'pg-h pg-corner',style:'grid-row:1;grid-column:1'}));
+      rooms.forEach(function(rid,ci){grid.appendChild(h('div',{class:'pg-h',style:'grid-row:1;grid-column:'+(ci+2)},rid?nm('rooms',rid):'Sans salle'));});
+      rows.forEach(function(rs,ri){
+        grid.appendChild(h('div',{class:'pg-t',style:'grid-row:'+(ri+2)+';grid-column:1'},rowLabel(rs)));
+        rooms.forEach(function(rid,ci){
+          var cell=h('div',{class:'pg-c',style:'grid-row:'+(ri+2)+';grid-column:'+(ci+2)});
+          if(CAN_EDIT){
+            cell.addEventListener('click',function(){
+              var ac=armed?course(armed):null;
+              openTplEditor(null,tplPreFromCourse(ac&&ac.sem===SEM().id?ac:null,day,rid,rs));
+            });
+            cell.addEventListener('dragover',function(e){e.preventDefault();cell.classList.add('dropok');});
+            cell.addEventListener('dragleave',function(){cell.classList.remove('dropok');});
+            cell.addEventListener('drop',function(e){clearDrop();dropOnCell(e,day,rid,rs);});
+          }
+          grid.appendChild(cell);
         });
-        if(CAN_EDIT){
-          col.addEventListener('dragover',function(e){e.preventDefault();col.classList.add('dropok');});
-          col.addEventListener('dragleave',function(e){if(e.target===col)col.classList.remove('dropok');});
-          col.addEventListener('drop',function(e){clearDrop();dropOnColumn(e,col,day,rid,T0,T1);});
-        }
-        var rl=list.filter(function(a){return rid?a.room===rid:(!a.room||S.rooms.every(function(r){return r.id!==a.room;}));});
-        var lay=layout(rl);
-        rl.forEach(function(a){
-        var s=a.slot,L=lay[a.id],c=slotColor(s);
-        var gl=s.groups.map(function(g){return nm('groups',g);}).join(', ');
-        var tl=s.teachers.map(function(t){return nm('teachers',t);}).join(', ');
-        var wk=fmtWeeks(a.mondays,S.current);
-        var lg=slotLang(s);
-        var h0=Math.max(18,Math.round(Math.min(a.dur,Math.max(30,T1-a.start))*PT)-2);
-        var tip=titleOf(s)+(lg&&lg.name!==titleOf(s)?' ('+lg.name+')':'')+'\n'+fmt(a.start)+'-'+fmt(a.start+a.dur)+(gl?'\nGroupes : '+gl:'')+(tl?'\nEnseignants : '+tl:'')+'\nSemaines : '+wk;
-        if(badIds[a.id])tip+='\n\nATTENTION : conflit ou capacité dépassée';
-        var evT=h('div',{
-          class:'ev tw-ev'+(CAN_EDIT?' tw-edit':'')+(badIds[a.id]?' bad':''),
-          style:'top:'+Math.round((a.start-T0)*PT)+'px;height:'+h0+'px;left:calc('+(L.lane*100/L.lanes)+'% + 1px);width:calc('+(100/L.lanes)+'% - 3px);background:'+c[0]+';border-left-color:'+c[1]+';color:'+c[1],
-          title:tip,draggable:CAN_EDIT?'true':'false'
-        },
-          h('b',{},(badIds[a.id]?'⚠ ':'')+(gl?gl+' ':'')+((!s.course&&!s.lang&&CAN_EDIT)?'Spé à choisir':titleOf(s))),
-          (tl||CAN_EDIT)?h('span',{class:'ln'+(tl?'':' ph')},'Prof : '+(tl||'à choisir')):null,
-          (a.room||CAN_EDIT)?h('span',{class:'ln'+(a.room?'':' ph')},'Salle : '+(a.room?nm('rooms',a.room):'à choisir')):null,
-          h('span',{class:'tw-wk'},fmt(a.start)+'-'+fmt(a.start+a.dur)+' · sem. '+wk));
-        evT.addEventListener('click',function(){if(CAN_EDIT)openTplEditor(a.t);});
-        if(CAN_EDIT){
-          evT.addEventListener('dragstart',function(e){
-            curDrag={kind:'tpl',offY:e.clientY-evT.getBoundingClientRect().top};
-            e.dataTransfer.setData('text/plain','tpl:'+a.t.id);e.dataTransfer.effectAllowed='move';
-          });
-          evT.addEventListener('dragend',function(){curDrag=null;clearDrop();});
-          evT.addEventListener('drop',function(e){
-            var txt=(e.dataTransfer&&e.dataTransfer.getData('text/plain'))||'';
-            if(txt.indexOf('tpl:')===0)return;
-            e.preventDefault();e.stopPropagation();clearDrop();
-            if(txt.indexOf('teacher:')===0){
-              var tid=txt.slice(8);
-              if(a.t.teachers.indexOf(tid)>=0){toast(nm('teachers',tid)+' est déjà sur cette séance.');return;}
-              a.t.teachers.push(tid);
-              afterTplChange(a.t,nm('teachers',tid)+' ajouté à la séance.');
-            }else if(txt.indexOf('room:')===0){
-              a.t.room=txt.slice(5);
-              afterTplChange(a.t,'Salle '+nm('rooms',a.t.room)+' choisie.');
-            }else if(txt.indexOf('lang:')===0){
-              a.t.lang=txt.slice(5);a.t.course='';
-              afterTplChange(a.t,'Spécialité : '+(lang(a.t.lang)?lang(a.t.lang).name:'')+'.');
-            }else if(txt.indexOf('group:')===0){
-              var gid=txt.slice(6);
-              if(a.t.groups.indexOf(gid)>=0){toast(nm('groups',gid)+' est déjà sur cette séance.');return;}
-              a.t.groups.push(gid);
-              afterTplChange(a.t,nm('groups',gid)+' ajouté à la séance.');
-            }else{
-              var dc=course(txt);
-              if(!dc||dc.sem!==a.t.sem)return;
-              a.t.course=dc.id;a.t.lang='';a.t.groups=dc.groups.slice();
-              if(!a.t.teachers.length)a.t.teachers=dc.teachers.slice();
-              if(!a.t.room)a.t.room=dc.room||'';
-              afterTplChange(a.t,'Spécialité remplacée par '+dc.name+'.');
-            }
-          });
-        }
-          col.appendChild(evT);
-        });
-        body.appendChild(col);
       });
-      box.appendChild(h('h3',{class:'tw-part'},pt.name+' ('+pad(Math.floor(T0/60))+':00 à '+pad(Math.floor(T1/60))+':00)'));
-      box.appendChild(h('div',{class:'tw-scroll'},heads,body));
+      pt.list.forEach(function(a){
+        var ci=rooms.indexOf(a.room||'');if(ci<0)ci=rooms.length-1;
+        var r0=0,k;
+        for(k=0;k<rows.length;k++)if(rows[k]<=a.start)r0=k;
+        var r1=r0;
+        for(k=r0;k<rows.length;k++)if(rows[k]<a.start+a.dur)r1=k;
+        var ev=buildTplBlock(a,badIds);
+        ev.style.gridRow=(r0+2)+' / span '+(r1-r0+1);
+        ev.style.gridColumn=String(ci+2);
+        grid.appendChild(ev);
+      });
+      box.appendChild(h('h3',{class:'tw-part'},pt.name));
+      box.appendChild(h('div',{class:'tw-scroll'},grid));
     });
     if(!items.length&&!CAN_EDIT)box.appendChild(h('div',{class:'tw-none'},'Aucun cours'));
     root.appendChild(box);
@@ -2287,8 +2324,8 @@ var TOUR=[
   {sel:'#sem',t:'1. Choisis le semestre',p:'De S5 à S10. Chaque semestre a sa propre semaine type, son semainier et ses dates de début et de fin.'},
   {sel:'#cfg',t:'2. Prépare la configuration',p:'Les langues (avec leurs couleurs), les groupes (TC3, TC4, TC2A3, TC2A4 de Gr1 à Gr4, M1 GC, M1 GM, chacun pouvant être rattaché à un autre groupe), les 26 enseignants et les salles sont déjà prêts. Les cours (matière, groupes, enseignant, nombre de séances) sont facultatifs : tu peux construire la semaine type directement avec les blocs spécialité, enseignant et salle.',view:'type'},
   {sel:'#wtype',t:'3. Ouvre la semaine type',p:'Ce bouton bascule entre la semaine type et le calendrier. Dans la semaine type, il y a une page par jour (onglets Lundi à Vendredi), avec le matin et l\'après-midi, une colonne par salle, comme ton PDF. Chaque bloc porte la couleur de sa langue, la spécialité, l\'enseignant, la salle et les semaines concernées.',view:'type'},
-    {sel:'#pal',t:'4. Glisse une spécialité dans la grille',p:'À droite, les blocs Spécialités, Enseignants, Salles et Groupes. Ouvre l\'onglet Lundi, prends par exemple « Anglais » et dépose-le à 8h le matin, dans la colonne d\'une salle : un bloc de 2 h est créé, avec toutes les semaines hors vacances et jours fériés par défaut.',view:'type'},
-  {sel:'#pal',t:'5. Ajoute l\'enseignant, puis la salle',p:'Glisse ensuite le nom de l\'enseignant sur le bloc, puis la salle, puis les groupes. L\'ordre n\'a pas d\'importance : le bloc affiche toujours la spécialité, l\'enseignant et la salle, dans cet ordre.',view:'type'},
+    {sel:'#pal',t:'4. Glisse une spécialité dans la grille',p:'À droite, les blocs Spécialités, Enseignants, Salles et Groupes. Ouvre l\'onglet Lundi, prends par exemple « Anglais » et dépose-le à 8h le matin, dans la case d\'une salle : un bloc de 2 h est créé, avec toutes les semaines hors vacances et jours fériés par défaut.',view:'type'},
+  {sel:'#pal',t:'5. Ajoute l\'enseignant, puis la salle',p:'Glisse ensuite sur le bloc l\'année (TC3, TC2A3, TC4...), le niveau de groupe (Gr1 à Gr4) et le nom de l\'enseignant. L\'ordre n\'a pas d\'importance : le bloc affiche toujours l\'année, la spécialité avec son niveau (Anglais-G1), puis l\'enseignant, comme dans ton PDF.',view:'type'},
   {sel:'#tt',t:'6. Déplace et règle les blocs',p:'Pour changer l\'heure ou la salle d\'un bloc, glisse-le vers sa nouvelle place dans la page du jour ; pour le changer de jour, dépose-le sur l\'onglet du jour. Clique sur un bloc pour régler ses semaines. Les conflits (même groupe, enseignant ou salle en même temps, salle trop petite) sont entourés de rouge et listés dans Contrôle.',view:'type'},
   {sel:'.tw-gen',t:'7. Génère le semainier',p:'Quand la semaine type est prête, clique sur « Générer le semainier ». Chaque bloc devient une séance du calendrier, pour chacune de ses semaines. Le compteur indique combien de changements restent à répercuter : tu peux modifier la semaine type puis régénérer à tout moment.',view:'type'},
   {sel:'#tbar',t:'8. Un bouton par enseignant',p:'Dans le calendrier, clique sur le nom d\'un enseignant : tu vois sa semaine, avec pour chaque séance la salle et les groupes. Les flèches changent de semaine et « Imprimer » donne sa feuille de la semaine. « Tous » revient à la vue complète. La vue par groupe, par salle ou par langue reste disponible dans le menu « Vue ».',view:'cal'},
