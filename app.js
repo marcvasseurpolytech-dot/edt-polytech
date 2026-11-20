@@ -1232,6 +1232,7 @@ function buildTplBlock(a,badIds,half){
   var halfKey=half||0;
   ev.addEventListener('click',function(e){e.stopPropagation();if(CAN_EDIT)openTplEditor(a.t);});
   if(!CAN_EDIT)return ev;
+  ev.addEventListener('contextmenu',function(e){e.preventDefault();e.stopPropagation();roomMenu(e,a.t);});
   ev.addEventListener('dragstart',function(e){
     curDrag={kind:'tpl',offY:0};
     e.dataTransfer.setData('text/plain','tpl:'+a.t.id);e.dataTransfer.effectAllowed='move';
@@ -2140,6 +2141,73 @@ function importPdfEdt(){
   }).catch(function(){toast('Import impossible : fichier du PDF introuvable.');});
 }
 
+function roomMenu(e,t){
+  var old=document.getElementById('roomctx');if(old)old.remove();
+  var m=h('div',{id:'roomctx',class:'roomctx'});
+  function close(){var x=document.getElementById('roomctx');if(x)x.remove();document.removeEventListener('click',close);document.removeEventListener('keydown',esc);}
+  function esc(k){if(k.key==='Escape')close();}
+  function add(txt,cls,fn){m.appendChild(h('button',{class:cls||'',onclick:function(ev){ev.stopPropagation();close();if(fn)fn();}},txt));}
+  m.appendChild(h('div',{class:'rc-h'},'Salles de ce bloc'));
+  m.appendChild(h('div',{class:'rc-t'},'1re heure : '+(t.room?nm('rooms',t.room):'aucune')+(t.room2?'  /  2e heure : '+nm('rooms',t.room2):'')));
+  m.appendChild(h('div',{class:'rc-s'},'Changer la salle de la 2e heure'));
+  S.rooms.forEach(function(r){
+    if(r.id===t.room2||(!t.room2&&r.id===t.room))return;
+    add(r.name,'',function(){
+      if(r.id===t.room){t.room2='';afterTplChange(t,'Même salle ('+r.name+') pendant les 2 heures.');}
+      else{t.room2=r.id;afterTplChange(t,'2e heure en '+r.name+' (1re heure : '+(t.room?nm('rooms',t.room):'sans salle')+').');}
+    });
+  });
+  if(t.room2)add('Même salle pour les 2 heures','rc-x',function(){t.room2='';afterTplChange(t,'Même salle pendant toute la séance.');});
+  add('Modifier le bloc...','rc-x',function(){openTplEditor(t);});
+  document.body.appendChild(m);
+  var w=m.offsetWidth,hh=m.offsetHeight;
+  m.style.left=Math.max(4,Math.min(e.clientX,innerWidth-w-4))+'px';
+  m.style.top=Math.max(4,Math.min(e.clientY,innerHeight-hh-4))+'px';
+  setTimeout(function(){document.addEventListener('click',close);document.addEventListener('keydown',esc);},0);
+}
+function duplicateSemester(srcId,dstId){
+  var src=semOf(srcId),dst=semOf(dstId),weeks=semWeeks(dstId),cmap={},n=0;
+  S.template=S.template.filter(function(o){return o.sem!==dstId;});
+  S.courses=S.courses.filter(function(c){return c.sem!==dstId;});
+  S.slots=S.slots.filter(function(x){return !(x.sem===dstId&&x.tpl);});
+  S.skips=S.skips.filter(function(k){return S.template.some(function(t){return t.id===k.tpl;});});
+  S.courses.filter(function(c){return c.sem===srcId;}).forEach(function(c){
+    var cc=JSON.parse(JSON.stringify(c));cc.id=uid();cc.sem=dstId;cmap[c.id]=cc.id;S.courses.push(cc);
+  });
+  S.template.filter(function(o){return o.sem===srcId;}).slice().forEach(function(o){
+    var t=JSON.parse(JSON.stringify(o));t.id=uid();t.sem=dstId;t.course=o.course?(cmap[o.course]||''):'';
+    t.weeks=weeks.map(function(w){return w.monday;}).filter(function(m){var dt=addDays(m,t.day);return !ferie(dt)&&!vacation(dt);});
+    S.template.push(t);n++;
+  });
+  var prev=S.current;S.current=dstId;var res=autoSync();S.current=prev;
+  fixWeek(S);save();renderAll();
+  toast(n+' blocs copiés de '+src.name+' vers '+dst.name+' (ancien contenu de '+dst.name+' remplacé), '+res.n+' séances générées. Les semaines sont recalculées selon les dates de '+dst.name+'.');
+}
+function duplicateBox(){
+  var from=h('select',{}),to=h('select',{});
+  S.semesters.forEach(function(m){
+    var nb=S.template.filter(function(t){return t.sem===m.id;}).length;
+    from.appendChild(h('option',{value:m.id},m.name+' ('+nb+' blocs)'));to.appendChild(h('option',{value:m.id},m.name));
+  });
+  var cnt=function(m){return S.template.filter(function(t){return t.sem===m.id;}).length;};
+  var srt=S.semesters.slice().sort(function(x,y){return cnt(y)-cnt(x);});
+  from.value=srt[0].id;
+  var tgt=S.semesters.filter(function(m){return m.id!==srt[0].id;}).sort(function(x,y){return cnt(x)-cnt(y);})[0];
+  if(tgt)to.value=tgt.id;
+  var go=h('button',{class:'danger',onclick:function(){
+    if(from.value===to.value){toast('Choisis deux semestres différents.');return;}
+    var nd=S.template.filter(function(t){return t.sem===to.value;}).length;
+    var doit=function(){duplicateSemester(from.value,to.value);closeModal();};
+    if(nd)confirmBox(semOf(to.value).name+' contient déjà '+nd+' blocs : ils seront remplacés. Continuer ?',doit,'Remplacer',function(){});
+    else doit();
+  }},'Dupliquer');
+  $('#modal-root').replaceChildren(h('div',{class:'ov'},h('div',{class:'modal',style:'max-width:480px'},
+    h('h3',{},'Dupliquer un semestre'),
+    h('p',{class:'hint'},'Copie la semaine type (blocs, salles, enseignants) d\'un semestre vers un autre. Les semaines sont recalculées avec les dates, jours fériés et vacances du semestre d\'arrivée. Le semestre source n\'est pas modifié.'),
+    h('div',{class:'rrow'},h('span',{},'De '),from,h('span',{},' vers '),to),
+    h('div',{class:'rrow'},go,h('button',{onclick:closeModal},'Annuler')))));
+}
+
 function semesterTab(){
   var v=S.view;
   var box=h('div',{},h('p',{class:'hint'},'Un emploi du temps par semestre. Renomme les semestres et règle leurs dates de début et de fin. Les groupes, enseignants, salles et langues sont communs à tous les semestres ; les cours et les séances sont propres à chaque semestre.'));
@@ -2187,6 +2255,7 @@ function semesterTab(){
     confirmBox('Remplacer le contenu de S5 par l\'EDT du PDF 2026-2027 (semestre impair, lundi à vendredi) ? Les blocs actuels de S5 sont supprimés et remplacés ; les semestres pairs ne sont pas touchés. Pense à exporter une sauvegarde avant.',importPdfEdt,'Remplacer',function(){openConfig('semester');});
   }},'Remplacer S5 par l\'EDT du PDF 2026-2027')));
 
+  box.appendChild(h('div',{class:'rrow'},h('button',{onclick:duplicateBox},'Dupliquer un semestre (ex. pair vers impair)')));
   var days=h('select',{},h('option',{value:'5'},'Lundi au vendredi'),h('option',{value:'6'},'Lundi au samedi'));
   days.value=String(v.days);
   days.addEventListener('change',function(){v.days=+days.value;save();renderAll();});
@@ -2468,11 +2537,11 @@ var TOUR_KEY='edt-tour-v1';
 var TOUR=[
   {sel:null,t:'Bienvenue Chef Bichette',p:'Cette appli construit les emplois du temps d\'un semestre en deux temps. D\'abord la semaine type, pour toutes les langues : tu glisses des blocs (spécialité, année, niveau, enseignant, salle) dans une grille jour par jour. Ensuite le calendrier de chaque semaine se remplit tout seul, avec les alertes jours fériés et vacances zone B, et un bouton par enseignant permet de voir où il est et avec qui. Un tour rapide ?'},
   {sel:'#sem',t:'1. Choisis le semestre',p:'De S5 à S10. Chaque semestre a sa propre semaine type, son semainier et ses dates de début et de fin.'},
-  {sel:'#cfg',t:'2. Prépare la configuration',p:'Les langues (avec leurs couleurs), les groupes (TC3, TC4, TC2A3, TC2A4 de Gr1 à Gr4, M1 GC, M1 GM, chacun pouvant être rattaché à un autre groupe), les 26 enseignants et les salles sont déjà prêts. Pour reprendre ton PDF 2026-2027 d\'un coup, ouvre Configuration, onglet Semestres, puis « Remplacer S5 par l\'EDT du PDF 2026-2027 ». Les cours (matière, groupes, enseignant, nombre de séances) sont facultatifs : tu peux construire la semaine type directement avec les blocs spécialité, enseignant et salle.',view:'type'},
+  {sel:'#cfg',t:'2. Prépare la configuration',p:'Les langues (avec leurs couleurs), les groupes (TC3, TC4, TC2A3, TC2A4 de Gr1 à Gr4, M1 GC, M1 GM, chacun pouvant être rattaché à un autre groupe), les 26 enseignants et les salles sont déjà prêts. Pour reprendre ton PDF 2026-2027 d\'un coup, ouvre Configuration, onglet Semestres, puis « Remplacer S5 par l\'EDT du PDF 2026-2027 ». Le bouton « Dupliquer un semestre » copie la semaine type d\'un semestre pair vers un impair. Les cours (matière, groupes, enseignant, nombre de séances) sont facultatifs : tu peux construire la semaine type directement avec les blocs spécialité, enseignant et salle.',view:'type'},
   {sel:'#wtype',t:'3. Ouvre la semaine type',p:'Ce bouton bascule entre la semaine type et le calendrier. Dans la semaine type, il y a une page par jour (onglets Lundi à Vendredi), avec le matin et l\'après-midi, une colonne par salle, comme ton PDF. Chaque bloc porte la couleur de sa langue, la spécialité, l\'enseignant, la salle et les semaines concernées.',view:'type'},
     {sel:'#pal',t:'4. Glisse une spécialité dans la grille',p:'À droite, les blocs Spécialités, Enseignants, Salles et Groupes. Ouvre l\'onglet Lundi, prends par exemple « Anglais » et dépose-le à 8h le matin, dans la case d\'une salle : un bloc de 2 h est créé, avec toutes les semaines hors vacances et jours fériés par défaut.',view:'type'},
   {sel:'#pal',t:'5. Ajoute l\'enseignant, puis la salle',p:'Glisse ensuite sur le bloc l\'année (TC3, TC2A3, TC4...), le niveau de groupe (Gr1 à Gr4) et le nom de l\'enseignant. L\'ordre n\'a pas d\'importance : le bloc affiche toujours l\'année, la spécialité avec son niveau (Anglais-G1), puis l\'enseignant, comme dans ton PDF.',view:'type'},
-  {sel:'#pal',t:'6. Change de salle au bout d\'1 h (labos)',p:'Par défaut, un bloc garde la même salle pendant ses 2 h. Pour partager les labos, dépose une salle sur la moitié basse du bloc : il affiche « Labo E403 puis Salle B305 » et occupe la 2e salle pendant la 2e heure. Les conflits de salle sont vérifiés heure par heure. Pour revenir à une seule salle, dépose la salle de la 1re heure sur la moitié basse.',view:'type'},
+  {sel:'#pal',t:'6. Change de salle au bout d\'1 h (labos)',p:'Par défaut, un bloc garde la même salle pendant ses 2 h. Le plus simple : clic droit sur le bloc, puis choisis la salle de la 2e heure dans la liste, tout se met en place tout seul. Tu peux aussi déposer une salle sur la moitié basse du bloc : il affiche « Labo E403 puis Salle B305 » et occupe la 2e salle pendant la 2e heure. Les conflits de salle sont vérifiés heure par heure. Pour revenir à une seule salle, dépose la salle de la 1re heure sur la moitié basse.',view:'type'},
   {sel:'#tt',t:'7. Déplace et règle les blocs',p:'Pour changer l\'heure ou la salle d\'un bloc, glisse-le vers sa nouvelle place dans la page du jour ; pour le changer de jour, dépose-le sur l\'onglet du jour. Clique sur un bloc pour régler ses semaines. Les conflits (même groupe, enseignant ou salle en même temps, salle trop petite) sont entourés de rouge et listés dans Contrôle.',view:'type'},
   {sel:'.tw-gen',t:'8. Le semainier se remplit tout seul',p:'Chaque bloc posé, déplacé ou modifié est répercuté tout de suite dans le calendrier, pour chacune de ses semaines. Le compteur de chaque cours indique les séances qu\'il reste à poser. Si une séance tombe un jour férié du lundi au vendredi ou pendant les vacances zone B, une alerte s\'affiche. Le bouton « Voir le semainier » ouvre le calendrier.',view:'type'},
   {sel:'#tbar',t:'8. Un bouton par enseignant',p:'Dans le calendrier, clique sur le nom d\'un enseignant : tu vois sa semaine, avec pour chaque séance la salle et les groupes. Les flèches changent de semaine et « Imprimer » donne sa feuille de la semaine. « Tous » revient à la vue complète. La vue par groupe, par salle ou par langue reste disponible dans le menu « Vue ».',view:'cal'},
