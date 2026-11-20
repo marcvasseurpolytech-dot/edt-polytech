@@ -2208,6 +2208,14 @@ function duplicateBox(){
     h('div',{class:'rrow'},go,h('button',{onclick:closeModal},'Annuler')))));
 }
 
+function importOddToEven(){
+  var od=S.semesters.filter(function(m){return m.name==='Impair'||m.name==='S5';})[0],
+      ev=S.semesters.filter(function(m){return m.name==='Pair'||m.name==='S6';})[0];
+  if(!od||!ev){toast('Semestres Impair et Pair introuvables : utilise « Dupliquer un semestre ».');return;}
+  var no=S.template.filter(function(t){return t.sem===od.id;}).length,ne=S.template.filter(function(t){return t.sem===ev.id;}).length;
+  if(!no){toast('Le semestre Impair est vide : rien à importer.');return;}
+  confirmBox('Importer la semaine type du semestre '+od.name+' ('+no+' blocs) vers le semestre '+ev.name+' ?'+(ne?' Les '+ne+' blocs actuels de '+ev.name+' seront remplacés.':'')+' Le semestre '+od.name+' n\'est pas modifié ; tu pourras ensuite tout ajuster dans '+ev.name+'.',function(){duplicateSemester(od.id,ev.id);closeModal();},'Importer',function(){openConfig('semester');});
+}
 function semesterTab(){
   var v=S.view;
   var box=h('div',{},h('p',{class:'hint'},'Un emploi du temps par semestre. Renomme les semestres et règle leurs dates de début et de fin. Les groupes, enseignants, salles et langues sont communs à tous les semestres ; les cours et les séances sont propres à chaque semestre.'));
@@ -2255,7 +2263,7 @@ function semesterTab(){
     confirmBox('Remplacer le contenu du semestre impair par l\'EDT du PDF 2026-2027 (semestre impair, lundi à vendredi) ? Les blocs actuels du semestre impair sont supprimés et remplacés ; le semestre pair n\'est pas touché. Pense à exporter une sauvegarde avant.',importPdfEdt,'Remplacer',function(){openConfig('semester');});
   }},'Remplacer le semestre impair par l\'EDT du PDF 2026-2027')));
 
-  box.appendChild(h('div',{class:'rrow'},h('button',{onclick:duplicateBox},'Dupliquer un semestre (ex. pair vers impair)')));
+  box.appendChild(h('div',{class:'rrow'},h('button',{class:'primary',onclick:importOddToEven},'Importer la semaine impair vers pair'),h('button',{onclick:duplicateBox},'Dupliquer un semestre (ex. pair vers impair)')));
   var days=h('select',{},h('option',{value:'5'},'Lundi au vendredi'),h('option',{value:'6'},'Lundi au samedi'));
   days.value=String(v.days);
   days.addEventListener('change',function(){v.days=+days.value;save();renderAll();});
