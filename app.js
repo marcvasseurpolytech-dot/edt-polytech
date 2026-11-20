@@ -688,7 +688,6 @@ function generateWeekly(){
   var r=syncStats(false);
   var n=r.created+r.updated+r.removed;
   save();
-  if(!n){renderAll();toast('Le semainier est déjà à jour.');return;}
   var parts=[];
   if(r.created)parts.push(r.created+' séance'+(r.created>1?'s':'')+' créée'+(r.created>1?'s':''));
   if(r.updated)parts.push(r.updated+' mise'+(r.updated>1?'s':'')+' à jour');
@@ -696,9 +695,10 @@ function generateWeekly(){
   typeView=false;
   try{history.replaceState(null,'',location.pathname+location.hash);}catch(e){}
   if(r.first)S.view.week=mondayOf(r.first);
+  else{var tf=S.template.filter(function(t){return t.sem===S.current&&t.weeks.length;}).map(function(t){return tplDesired(t)[0];}).filter(Boolean).sort()[0];if(tf)S.view.week=tf;}
   fixWeek(S);
   renderAll();
-  toast('Semainier généré : '+parts.join(', ')+'.');
+  toast(n?'Semainier mis à jour : '+parts.join(', ')+'.':'Le semainier est à jour.');
 }
 function dropTemplate(t){
   S.slots=S.slots.filter(function(x){return !(x.tpl===t.id&&!x.edited);});
@@ -744,7 +744,7 @@ function newBlank(day,room,start,extra){
   Object.assign(t,extra);
   if(yl.year!==undefined||yl.level!==undefined)setYL(t,yl);
   S.template.push(t);
-  afterTplChange(t,'Bloc créé (2 h, toutes les semaines hors vacances et jours fériés). Clique dessus pour régler les semaines.');
+  afterTplChange(t,'Bloc créé (2 h, toutes les semaines hors vacances et jours fériés).');
 }
 function tplPreFromCourse(c,day,room,start){
   var dur=c?c.dur:120;
@@ -756,10 +756,45 @@ function tplPreFromCourse(c,day,room,start){
   return {id:null,sem:SEM().id,course:c?c.id:'',groups:c?c.groups.slice():[],teachers:c?c.teachers.slice():[],
     room:room||(c?c.room||'':''),day:day,start:start,end:Math.min(1440,start+dur),dur:dur,weeks:wk};
 }
+// Blocs de la semaine type dont une semaine tombe un jour ferie (lundi a vendredi) ou pendant les vacances zone B
+function holidayClashes(onlyId){
+  var out=[];
+  S.template.filter(function(t){return t.sem===S.current&&(!onlyId||t.id===onlyId);}).forEach(function(t){
+    tplDesired(t).forEach(function(m){
+      var dt=addDays(m,t.day),f=dayFlag(dt);
+      if(f)out.push({t:t,date:dt,flag:f});
+    });
+  });
+  return out;
+}
+function clashText(c){
+  return longDate(c.date)+' '+shortDate(c.date)+' ('+(c.flag.kind==='ferie'?'férié : ':'vacances zone B : ')+c.flag.name+') : '+titleOf(c.t);
+}
+// Met le semainier a jour tout de suite apres un changement de la semaine type
+function autoSync(onlyId){
+  var r=syncStats(false);
+  return {n:r.created+r.updated+r.removed,clash:holidayClashes(onlyId)};
+}
+function afterAuto(msg,res){
+  var w=res.clash.length?' Attention : '+res.clash.length+' séance(s) tombent un jour férié ou pendant les vacances (voir l\'alerte en haut de la page).':'';
+  toast(msg+(res.n?' Semainier mis à jour ('+res.n+' changement'+(res.n>1?'s':'')+').':'')+w);
+}
+function weekAlerts(monday){
+  var fer=[],vac='',nv=0,i,d,f;
+  for(i=0;i<5;i++){
+    d=addDays(monday,i);f=ferie(d);
+    if(f)fer.push(longDate(d)+' '+shortDate(d)+' est férié ('+f+') : pas de cours ce jour-là.');
+    var v=vacation(d);if(v){nv++;vac=v;}
+  }
+  if(nv)vac='Vacances scolaires zone B (Lille) : '+vac+(nv<5?' ('+nv+' jour'+(nv>1?'s':'')+' de cette semaine)':', toute la semaine')+'.';
+  return {fer:fer,vac:vac};
+}
 function afterTplChange(t,msg){
+  var res=autoSync(t.id);
   save();renderAll();
   var bad=tplIssues().filter(function(i){return i.ids&&i.ids.indexOf(t.id)>=0;});
-  toast(bad.length?'Attention : '+bad[0].text:msg+' Pense à « Générer le semainier ».');
+  if(bad.length)toast('Attention : '+bad[0].text);
+  else afterAuto(msg,res);
 }
 function moveTpl(t,day,room,start){
   if(room===null)room=t.room||'';
@@ -862,7 +897,7 @@ function renderTeacherBar(){
 function nextYear(){
   var yb=yearBounds(),y0=+yb.start.slice(0,4),lab=y0+'-'+(y0+1),lab2=(y0+1)+'-'+(y0+2);
   var nTpl=S.template.length,nSlots=S.slots.length;
-  confirmBox('Passer à l\'année universitaire '+lab2+' ? La semaine type ('+nTpl+' bloc'+(nTpl>1?'s':'')+') est reprise telle quelle : mêmes spécialités, enseignants, salles et groupes, avec les mêmes numéros de semaine, en changeant seulement l\'année. Les dates de tous les semestres avancent d\'un an. Le semainier de '+lab+' ('+nSlots+' séance'+(nSlots>1?'s':'')+') est retiré du calendrier : une copie de sauvegarde est téléchargée d\'abord. Ensuite tu ajustes les blocs en les glissant, puis « Générer le semainier ».',function(){
+  confirmBox('Passer à l\'année universitaire '+lab2+' ? La semaine type ('+nTpl+' bloc'+(nTpl>1?'s':'')+') est reprise telle quelle : mêmes spécialités, enseignants, salles et groupes, avec les mêmes numéros de semaine, en changeant seulement l\'année. Les dates de tous les semestres avancent d\'un an. Le semainier de '+lab+' ('+nSlots+' séance'+(nSlots>1?'s':'')+') est retiré du calendrier : une copie de sauvegarde est téléchargée d\'abord. Ensuite tu ajustes les blocs en les glissant : le semainier se remplit tout seul.',function(){
     try{
       var blob=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});
       var l=h('a',{href:URL.createObjectURL(blob),download:'emplois-du-temps-'+lab+'.json'});
@@ -881,8 +916,8 @@ function nextYear(){
     });
     S.slots=[];S.skips=[];
     S.view.week=mondayOf(ny.start);fixWeek(S);
-    save();renderAll();
-    toast('Année '+lab2+' prête : semaine type reprise'+(lost?' ('+lost+' semaine(s) sans équivalent ignorée(s))':'')+'. Ajuste les blocs puis génère le semainier.');
+    var resN=autoSync();save();renderAll();
+    afterAuto('Année '+lab2+' prête : semaine type reprise'+(lost?' ('+lost+' semaine(s) sans équivalent ignorée(s))':'')+'.',resN);
   },'Passer à '+lab2);
 }
 function openBulkWeeks(){
@@ -919,8 +954,8 @@ function openBulkWeeks(){
     if(pw.errors.length){toast(pw.errors[0]);return;}
     if(!pw.mondays.length){toast('Indique au moins une semaine.');return;}
     m.forEach(function(t){t.weeks=pw.mondays.filter(function(w){return inSemester(addDays(w,t.day),t.sem);});});
-    save();closeModal();renderAll();
-    toast('Semaines appliquées à '+m.length+' bloc'+(m.length>1?'s':'')+'. Pense à « Générer le semainier ».');
+    var resB=autoSync();save();closeModal();renderAll();
+    afterAuto('Semaines appliquées à '+m.length+' bloc'+(m.length>1?'s':'')+'.',resB);
   }
   openModal(h('div',{class:'modal'},
     h('h2',{},'Semaines de plusieurs blocs à la fois'),
@@ -1111,13 +1146,14 @@ function openTplEditor(t,pre){
     if(gOld!==gNew){rec.year='';rec.level='';}
     Object.assign(rec,{sem:d.sem,course:d.course,lang:d.course?'':(d.lang||''),groups:d.groups.slice(),teachers:d.teachers.slice(),room:d.room||'',day:d.day,start:d.start,dur:d.end-d.start,weeks:pw.mondays.slice().sort()});
     if(isNew)S.template.push(rec);
+    var resSave=autoSync(rec.id);
     if(rec.sem!==S.current){S.current=rec.sem;S.view.week=mondayOf(eff(SEM()).start);armed=null;fixWeek(S);}
     save();closeModal();renderAll();
-    toast('Séance type enregistrée. Clique sur « Générer le semainier » pour la répercuter dans le calendrier.');
+    afterAuto('Séance type enregistrée.',resSave);
   }
   function doDel(){
     confirmBox('Supprimer cette séance type ? Tout de suite, les séances du calendrier qui en viennent et n\'ont pas été modifiées à la main seront aussi supprimées (elles redeviennent à placer).',function(){
-      dropTemplate(t);save();closeModal();renderAll();toast('Séance type supprimée');
+      dropTemplate(t);autoSync();save();closeModal();renderAll();toast('Séance type supprimée, semainier mis à jour.');
     },'Supprimer');
   }
   var actions=h('div',{class:'actions'});
@@ -1127,7 +1163,7 @@ function openTplEditor(t,pre){
   actions.appendChild(h('button',{class:'primary',onclick:doSave},'Enregistrer'));
   openModal(h('div',{class:'modal'},
     h('h2',{},isNew?'Nouvelle séance type':'Modifier la séance type'),
-    h('p',{class:'hint'},'Ce que tu règles ici est répercuté dans le calendrier quand tu cliques sur « Générer le semainier ». Les séances déplacées ou modifiées à la main dans le calendrier ne sont jamais touchées.'),
+    h('p',{class:'hint'},'Ce que tu règles ici est répercuté tout de suite dans le calendrier. Les séances déplacées ou modifiées à la main dans le calendrier ne sont jamais touchées.'),
     semField,
     h('div',{class:'f'},h('label',{},'Spécialité (langue)'),langSel),
     h('div',{class:'f'},h('label',{},'Cours (facultatif)'),courseSel,info),
@@ -1220,12 +1256,20 @@ function renderTypeWeek(){
     var pd0=syncStats(true),pn=pd0.created+pd0.updated+pd0.removed;
     var bar=h('div',{class:'tw-gen'+(pn?' todo':'')},
       h('span',{},S.template.some(function(t){return t.sem===S.current;})
-        ?(pn?pn+' changement'+(pn>1?'s':'')+' à répercuter dans le semainier ('+pd0.created+' à créer, '+pd0.updated+' à mettre à jour, '+pd0.removed+' à retirer).':'Le semainier est à jour avec la semaine type.')
+        ?(pn?pn+' changement'+(pn>1?'s':'')+' à répercuter dans le semainier ('+pd0.created+' à créer, '+pd0.updated+' à mettre à jour, '+pd0.removed+' à retirer).':'Le semainier est à jour avec la semaine type : il se met à jour tout seul à chaque changement.')
         :'Commence par construire la semaine type (glisse un cours de la liste dans la grille), puis génère le semainier.'),
       h('span',{class:'sp'}),
       h('button',{onclick:nextYear,title:'Reprendre la semaine type pour l\'année universitaire suivante'},'Année universitaire suivante'),
-      h('button',{class:'primary',onclick:generateWeekly,disabled:!pn},'Générer le semainier'));
+      h('button',{class:'primary',onclick:generateWeekly},'Voir le semainier'));
     root.appendChild(bar);
+    var cl=holidayClashes();
+    if(cl.length){
+      var wb=h('div',{class:'warnbox'},h('b',{},'Attention : '+cl.length+' séance'+(cl.length>1?'s':'')+' tombent un jour férié ou pendant les vacances zone B.'));
+      cl.slice(0,6).forEach(function(c){wb.appendChild(h('div',{},clashText(c)));});
+      if(cl.length>6)wb.appendChild(h('div',{},'... et '+(cl.length-6)+' autre(s). Règle les semaines des blocs concernés.'));
+      root.appendChild(wb);
+    }
+    root.appendChild(h('details',{class:'holdet'},h('summary',{},'Jours fériés (lundi à vendredi) et vacances zone B de l\'année universitaire'),holidayBox()));
     root.appendChild(h('p',{class:'hint tw-help'},'Choisis un jour avec les onglets (comme les pages de ton PDF), puis glisse une spécialité de la palette de droite dans la case d\'une salle et d\'une heure. Ajoute ensuite l\'année, le niveau Gr1 à Gr4 et l\'enseignant sur le bloc. Glisse un bloc pour le déplacer, clique dessus pour régler ses semaines.'));
   }
   var hasAny=S.template.some(function(t){return t.sem===S.current;});
@@ -1375,6 +1419,9 @@ function renderGrid(){
   });
 
   var root=$('#tt');root.replaceChildren();
+  var wal=weekAlerts(v.week);
+  if(wal.fer.length)root.appendChild(h('div',{class:'warnbox'},wal.fer.map(function(x){return h('div',{},'Attention : '+x);})));
+  if(wal.vac)root.appendChild(h('div',{class:'vacbox'},wal.vac));
   var tpl='52px repeat('+n+',minmax(90px,1fr))';
 
   var heads=h('div',{class:'heads',style:'grid-template-columns:'+tpl},h('div',{class:'gut'}));
@@ -2054,10 +2101,10 @@ function semesterTab(){
 }
 
 function holidayBox(){
-  var m=SEM(),box=h('div',{class:'holbox'});
-  box.appendChild(h('h3',{},'Jours fériés et vacances (zone B, Lille) · '+m.name));
+  var m=eff(SEM()),box=h('div',{class:'holbox'});
+  box.appendChild(h('h3',{},'Jours fériés et vacances (zone B, Lille) · année universitaire'));
   var rows=[],d=m.start,guard=0;
-  while(d<=m.end&&guard++<800){var f=ferie(d);if(f)rows.push({k:d,t:longDate(d)+' '+fullDate(d)+' : '+f+' (férié)'});d=addDays(d,1);}
+  while(d<=m.end&&guard++<800){var f=ferie(d);if(f)rows.push({k:d,t:'Attention, '+longDate(d)+' '+fullDate(d)+' : '+f+' (férié, pas de cours)'});d=addDays(d,1);}
   VAC.forEach(function(v){
     if(v.end<=m.start||v.start>=m.end)return;
     rows.push({k:v.start,t:v.name+' : du '+fullDate(v.start)+' au '+fullDate(addDays(v.end,-1))+' (reprise le '+fullDate(v.end)+')'});
@@ -2320,21 +2367,21 @@ function openExport(){
 /* ---------- Tutoriel guidé ---------- */
 var TOUR_KEY='edt-tour-v1';
 var TOUR=[
-  {sel:null,t:'Bienvenue Chef Bichette',p:'Cette appli construit les emplois du temps d\'un semestre en deux temps. D\'abord la semaine type, pour toutes les langues : tu glisses des blocs (langue, enseignant, salle) dans une grille jour par jour. Ensuite tu cliques sur « Générer le semainier » : le calendrier de chaque semaine se remplit, et un bouton par enseignant permet de voir où il est et avec qui. Un tour rapide ?'},
+  {sel:null,t:'Bienvenue Chef Bichette',p:'Cette appli construit les emplois du temps d\'un semestre en deux temps. D\'abord la semaine type, pour toutes les langues : tu glisses des blocs (spécialité, année, niveau, enseignant, salle) dans une grille jour par jour. Ensuite le calendrier de chaque semaine se remplit tout seul, avec les alertes jours fériés et vacances zone B, et un bouton par enseignant permet de voir où il est et avec qui. Un tour rapide ?'},
   {sel:'#sem',t:'1. Choisis le semestre',p:'De S5 à S10. Chaque semestre a sa propre semaine type, son semainier et ses dates de début et de fin.'},
   {sel:'#cfg',t:'2. Prépare la configuration',p:'Les langues (avec leurs couleurs), les groupes (TC3, TC4, TC2A3, TC2A4 de Gr1 à Gr4, M1 GC, M1 GM, chacun pouvant être rattaché à un autre groupe), les 26 enseignants et les salles sont déjà prêts. Les cours (matière, groupes, enseignant, nombre de séances) sont facultatifs : tu peux construire la semaine type directement avec les blocs spécialité, enseignant et salle.',view:'type'},
   {sel:'#wtype',t:'3. Ouvre la semaine type',p:'Ce bouton bascule entre la semaine type et le calendrier. Dans la semaine type, il y a une page par jour (onglets Lundi à Vendredi), avec le matin et l\'après-midi, une colonne par salle, comme ton PDF. Chaque bloc porte la couleur de sa langue, la spécialité, l\'enseignant, la salle et les semaines concernées.',view:'type'},
     {sel:'#pal',t:'4. Glisse une spécialité dans la grille',p:'À droite, les blocs Spécialités, Enseignants, Salles et Groupes. Ouvre l\'onglet Lundi, prends par exemple « Anglais » et dépose-le à 8h le matin, dans la case d\'une salle : un bloc de 2 h est créé, avec toutes les semaines hors vacances et jours fériés par défaut.',view:'type'},
   {sel:'#pal',t:'5. Ajoute l\'enseignant, puis la salle',p:'Glisse ensuite sur le bloc l\'année (TC3, TC2A3, TC4...), le niveau de groupe (Gr1 à Gr4) et le nom de l\'enseignant. L\'ordre n\'a pas d\'importance : le bloc affiche toujours l\'année, la spécialité avec son niveau (Anglais-G1), puis l\'enseignant, comme dans ton PDF.',view:'type'},
   {sel:'#tt',t:'6. Déplace et règle les blocs',p:'Pour changer l\'heure ou la salle d\'un bloc, glisse-le vers sa nouvelle place dans la page du jour ; pour le changer de jour, dépose-le sur l\'onglet du jour. Clique sur un bloc pour régler ses semaines. Les conflits (même groupe, enseignant ou salle en même temps, salle trop petite) sont entourés de rouge et listés dans Contrôle.',view:'type'},
-  {sel:'.tw-gen',t:'7. Génère le semainier',p:'Quand la semaine type est prête, clique sur « Générer le semainier ». Chaque bloc devient une séance du calendrier, pour chacune de ses semaines. Le compteur indique combien de changements restent à répercuter : tu peux modifier la semaine type puis régénérer à tout moment.',view:'type'},
+  {sel:'.tw-gen',t:'7. Le semainier se remplit tout seul',p:'Chaque bloc posé, déplacé ou modifié est répercuté tout de suite dans le calendrier, pour chacune de ses semaines. Le compteur de chaque cours indique les séances qu\'il reste à poser. Si une séance tombe un jour férié du lundi au vendredi ou pendant les vacances zone B, une alerte s\'affiche. Le bouton « Voir le semainier » ouvre le calendrier.',view:'type'},
   {sel:'#tbar',t:'8. Un bouton par enseignant',p:'Dans le calendrier, clique sur le nom d\'un enseignant : tu vois sa semaine, avec pour chaque séance la salle et les groupes. Les flèches changent de semaine et « Imprimer » donne sa feuille de la semaine. « Tous » revient à la vue complète. La vue par groupe, par salle ou par langue reste disponible dans le menu « Vue ».',view:'cal'},
   {sel:'.top .wk',t:'9. Parcours le semainier',p:'Le numéro de semaine est celui de la semaine ISO (48, 49, 53...). Les jours fériés sont signalés en orange et les vacances de la zone B en bleu. Tu peux aussi sauter à une date précise.',view:'cal'},
   {sel:'#tt',t:'10. Ajuste une semaine sans toucher à la semaine type',p:'Clique sur une séance pour la modifier, la dupliquer ou l\'annuler ; glisse-la pour changer le jour ou l\'heure. Ces changements ne touchent jamais la semaine type, et une régénération ne les écrase pas. « Rétablir selon la semaine type » annule une modification manuelle.',view:'cal'},
   {sel:'#courses',t:'11. Reprogramme une séance annulée',p:'Une séance annulée repart dans les séances à placer : le compteur du cours (par exemple 11/12) montre ce qui manque. Fais-la glisser de la liste vers un autre créneau du calendrier.',view:'cal'},
   {sel:'#conf',t:'12. Le contrôle',p:'L\'appli vérifie en continu : groupe, enseignant ou salle en double, salle trop petite, séance hors semestre, séance un jour férié ou pendant les vacances, trop de séances pour un cours. Clique sur une ligne pour corriger.',view:'cal'},
   {sel:'#exp',t:'13. Sauvegarde et projection',p:'Tout s\'enregistre automatiquement sur le serveur : le voyant « Enregistré » en haut le confirme, sans redéploiement. La vue utilisateur (adresse sans /admin) est en lecture seule, avec les mêmes boutons par enseignant, et se met à jour toute seule pour la projection. Export / Import garde une copie JSON et des CSV pour Excel.',view:'cal'},
-  {sel:null,t:'C\'est parti',p:'Tu peux relancer ce tutoriel avec le bouton « Tutoriel ». Ordre conseillé : glisse les spécialités, les enseignants et les salles dans la semaine type, génère le semainier, puis clique sur le nom de chaque enseignant pour vérifier sa semaine.',view:'type'}
+  {sel:null,t:'C\'est parti',p:'Tu peux relancer ce tutoriel avec le bouton « Tutoriel ». Ordre conseillé : glisse les spécialités, les années, les niveaux, les enseignants et les salles dans la semaine type, vérifie les alertes fériés et vacances, puis clique sur le nom de chaque enseignant pour vérifier sa semaine.',view:'type'}
 ];
 var tourIdx=-1;
 

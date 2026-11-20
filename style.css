@@ -217,3 +217,7 @@ body.typeweek aside #courses{order:-1}
 .ev.pdfblk .ln.ph{font-style:italic;opacity:.7}
 @media print{.pg-c{cursor:default}.pdfgrid{border-color:#000}}
 .ev.pdfblk .ln.sm{white-space:normal;overflow-wrap:anywhere}
+.vacbox{border-radius:8px;padding:8px 10px;margin-bottom:12px;background:#eaf3ff;border:1px solid #bcd6f5;color:#16406e;font-size:13px}
+.holdet{margin:6px 0 12px;font-size:13px}
+.holdet summary{cursor:pointer;font-weight:600}
+@media print{.holdet{display:none}}
