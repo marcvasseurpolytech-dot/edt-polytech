@@ -145,7 +145,7 @@ function defaultLanguages(){
 
 function defaultSemesters(){
   var out=[];
-  ['S5','S6','S7','S8','S9','S10'].forEach(function(n,i){
+  ['Impair','Pair'].forEach(function(n,i){
     var autumn=(i%2===0);
     out.push({id:uid(),name:n,start:autumn?'2026-09-07':'2027-02-01',end:autumn?'2027-01-15':'2027-06-11'});
   });
@@ -1092,7 +1092,7 @@ function openTplEditor(t,pre){
       d.sem=semSel.value;d.course='';d.groups=[];d.teachers=[];d.room='';d.weeks=[];d.weeksTxt='';
       openTplEditor(null,d);
     });
-    semField=h('div',{class:'f'},h('label',{},'Semestre (S5, S6, S7...)'),semSel);
+    semField=h('div',{class:'f'},h('label',{},'Semestre (impair ou pair)'),semSel);
   }else{
     semField=h('div',{class:'f'},h('label',{},'Semestre'),h('div',{},semName(d.sem)));
   }
@@ -2114,7 +2114,7 @@ function findTeacher(p){
 }
 function importPdfEdt(){
   fetch('pdf-edt.json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
-    var sem=S.semesters.filter(function(x){return x.name==='S5';})[0]||SEM(),prev=S.current;
+    var sem=S.semesters.filter(function(x){return x.name==='Impair'||x.name==='S5';})[0]||SEM(),prev=S.current;
     var langColor={'Anglais':'bleu','Allemand':'orange','Espagnol':'rose'};
     var weeks=semWeeks(sem.id),cnt=0;
     // Remplace l'ancien contenu de S5 (blocs et seances generees)
@@ -2137,7 +2137,7 @@ function importPdfEdt(){
     var res=autoSync();
     S.current=prev;
     fixWeek(S);save();renderAll();closeModal();
-    toast(cnt+' blocs importés dans '+sem.name+' (ancien contenu remplacé), '+res.n+' séances générées. Choisis '+sem.name+' en haut pour les voir. Les semestres pairs ne sont pas touchés.');
+    toast(cnt+' blocs importés dans '+sem.name+' (ancien contenu remplacé), '+res.n+' séances générées. Choisis '+sem.name+' en haut pour les voir. Le semestre pair n\'est pas touché.');
   }).catch(function(){toast('Import impossible : fichier du PDF introuvable.');});
 }
 
@@ -2252,8 +2252,8 @@ function semesterTab(){
   nin.addEventListener('keydown',function(e){if(e.key==='Enter')add();});
   box.appendChild(h('div',{class:'rrow add'},nin,h('button',{onclick:add},'+ Ajouter')));
   box.appendChild(h('div',{class:'rrow'},h('button',{onclick:function(){
-    confirmBox('Remplacer le contenu de S5 par l\'EDT du PDF 2026-2027 (semestre impair, lundi à vendredi) ? Les blocs actuels de S5 sont supprimés et remplacés ; les semestres pairs ne sont pas touchés. Pense à exporter une sauvegarde avant.',importPdfEdt,'Remplacer',function(){openConfig('semester');});
-  }},'Remplacer S5 par l\'EDT du PDF 2026-2027')));
+    confirmBox('Remplacer le contenu du semestre impair par l\'EDT du PDF 2026-2027 (semestre impair, lundi à vendredi) ? Les blocs actuels du semestre impair sont supprimés et remplacés ; le semestre pair n\'est pas touché. Pense à exporter une sauvegarde avant.',importPdfEdt,'Remplacer',function(){openConfig('semester');});
+  }},'Remplacer le semestre impair par l\'EDT du PDF 2026-2027')));
 
   box.appendChild(h('div',{class:'rrow'},h('button',{onclick:duplicateBox},'Dupliquer un semestre (ex. pair vers impair)')));
   var days=h('select',{},h('option',{value:'5'},'Lundi au vendredi'),h('option',{value:'6'},'Lundi au samedi'));
@@ -2536,8 +2536,8 @@ function openExport(){
 var TOUR_KEY='edt-tour-v1';
 var TOUR=[
   {sel:null,t:'Bienvenue Chef Bichette',p:'Cette appli construit les emplois du temps d\'un semestre en deux temps. D\'abord la semaine type, pour toutes les langues : tu glisses des blocs (spécialité, année, niveau, enseignant, salle) dans une grille jour par jour. Ensuite le calendrier de chaque semaine se remplit tout seul, avec les alertes jours fériés et vacances zone B, et un bouton par enseignant permet de voir où il est et avec qui. Un tour rapide ?'},
-  {sel:'#sem',t:'1. Choisis le semestre',p:'De S5 à S10. Chaque semestre a sa propre semaine type, son semainier et ses dates de début et de fin.'},
-  {sel:'#cfg',t:'2. Prépare la configuration',p:'Les langues (avec leurs couleurs), les groupes (TC3, TC4, TC2A3, TC2A4 de Gr1 à Gr4, M1 GC, M1 GM, chacun pouvant être rattaché à un autre groupe), les 26 enseignants et les salles sont déjà prêts. Pour reprendre ton PDF 2026-2027 d\'un coup, ouvre Configuration, onglet Semestres, puis « Remplacer S5 par l\'EDT du PDF 2026-2027 ». Le bouton « Dupliquer un semestre » copie la semaine type d\'un semestre pair vers un impair. Les cours (matière, groupes, enseignant, nombre de séances) sont facultatifs : tu peux construire la semaine type directement avec les blocs spécialité, enseignant et salle.',view:'type'},
+  {sel:'#sem',t:'1. Choisis le semestre',p:'Impair (septembre) ou pair (janvier). Chaque semestre a sa propre semaine type, son semainier et ses dates de début et de fin.'},
+  {sel:'#cfg',t:'2. Prépare la configuration',p:'Les langues (avec leurs couleurs), les groupes (TC3, TC4, TC2A3, TC2A4 de Gr1 à Gr4, M1 GC, M1 GM, chacun pouvant être rattaché à un autre groupe), les 26 enseignants et les salles sont déjà prêts. Pour reprendre ton PDF 2026-2027 d\'un coup, ouvre Configuration, onglet Semestres, puis « Remplacer le semestre impair par l\'EDT du PDF 2026-2027 ». Le bouton « Dupliquer un semestre » copie la semaine type d\'un semestre pair vers un impair. Les cours (matière, groupes, enseignant, nombre de séances) sont facultatifs : tu peux construire la semaine type directement avec les blocs spécialité, enseignant et salle.',view:'type'},
   {sel:'#wtype',t:'3. Ouvre la semaine type',p:'Ce bouton bascule entre la semaine type et le calendrier. Dans la semaine type, il y a une page par jour (onglets Lundi à Vendredi), avec le matin et l\'après-midi, une colonne par salle, comme ton PDF. Chaque bloc porte la couleur de sa langue, la spécialité, l\'enseignant, la salle et les semaines concernées.',view:'type'},
     {sel:'#pal',t:'4. Glisse une spécialité dans la grille',p:'À droite, les blocs Spécialités, Enseignants, Salles et Groupes. Ouvre l\'onglet Lundi, prends par exemple « Anglais » et dépose-le à 8h le matin, dans la case d\'une salle : un bloc de 2 h est créé, avec toutes les semaines hors vacances et jours fériés par défaut.',view:'type'},
   {sel:'#pal',t:'5. Ajoute l\'enseignant, puis la salle',p:'Glisse ensuite sur le bloc l\'année (TC3, TC2A3, TC4...), le niveau de groupe (Gr1 à Gr4) et le nom de l\'enseignant. L\'ordre n\'a pas d\'importance : le bloc affiche toujours l\'année, la spécialité avec son niveau (Anglais-G1), puis l\'enseignant, comme dans ton PDF.',view:'type'},
