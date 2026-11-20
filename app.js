@@ -1222,6 +1222,9 @@ function buildTplBlock(a,badIds,half){
     h('span',{class:'ln sp1'},spe),
     (tl||CAN_EDIT)?h('span',{class:'ln'+(tl?'':' ph')},tl||'Prof à choisir'):null,
     h('span',{class:'ln sm'},roomLine(a)+fmt(a.start)+'-'+fmt(a.start+a.dur)+' · sem. '+wk));
+  if(half===1){
+    ev.lastChild.textContent=roomLine(a).replace(/ · $/,'');
+  }
   if(half===2){
     ev.replaceChildren(h('b',{},(badIds[a.id]?'⚠ ':'')+(yearTxt||'Année')),h('span',{class:'ln sp1'},spe),
       h('span',{class:'ln sm'},'2e heure : '+(a.room2?nm('rooms',a.room2):'')));
@@ -1357,7 +1360,7 @@ function renderTypeWeek(){
       if(!CAN_EDIT&&!pt.list.length)return;
       var day=d,rows=pt.rows,rooms=S.rooms.map(function(r){return r.id;});
       if(pt.list.some(function(a){return !a.room||rooms.indexOf(a.room)<0;})||!rooms.length)rooms.push('');
-      var grid=h('div',{class:'pdfgrid',style:'grid-template-columns:48px repeat('+rooms.length+',minmax(0,1fr));grid-template-rows:34px repeat('+rows.length+',74px)'});
+      var grid=h('div',{class:'pdfgrid',style:'grid-template-columns:48px repeat('+rooms.length+',minmax(0,1fr));grid-template-rows:34px repeat('+rows.length+',80px)'});
       grid.appendChild(h('div',{class:'pg-h pg-corner',style:'grid-row:1;grid-column:1'}));
       rooms.forEach(function(rid,ci){grid.appendChild(h('div',{class:'pg-h',style:'grid-row:1;grid-column:'+(ci+2)},rid?nm('rooms',rid):'Sans salle'));});
       rows.forEach(function(rs,ri){
@@ -2097,6 +2100,42 @@ function hoursSelect(value,from,to,onChange){
   return sel;
 }
 
+/* ---------- Import du PDF (nouveau semestre, sans toucher a l'existant) ---------- */
+function findByName(kind,name,extra){
+  var k=name.toLowerCase(),x=S[kind].filter(function(i){return i.name.toLowerCase()===k;})[0];
+  if(!x){x=Object.assign({id:uid(),name:name},extra||{});S[kind].push(x);}
+  return x.id;
+}
+function importPdfEdt(){
+  fetch('pdf-edt.json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
+    var base=SEM(),sem={id:uid(),name:d.name,start:base.start,end:base.end};
+    var nm0=d.name,n=2;
+    while(S.semesters.some(function(x){return x.name===nm0;}))nm0=d.name+' '+(n++);
+    sem.name=nm0;
+    S.semesters.push(sem);
+    var langColor={'Anglais':'bleu','Allemand':'orange','Espagnol':'rose','Booster':'violet','Anglais renforcé':'turquoise'};
+    var weeks=semWeeks(sem.id),cnt=0;
+    d.blocks.forEach(function(b){
+      var lid=findByName('languages',b.spe,{color:langColor[b.spe]||'gris'});
+      var t={id:uid(),sem:sem.id,course:'',lang:lid,year:'',level:'',groups:[],
+        teachers:b.profs.map(function(p){return findByName('teachers',p);}),
+        room:b.room?findByName('rooms',b.room,{cap:0}):'',room2:b.room2?findByName('rooms',b.room2,{cap:0}):'',
+        day:b.day,start:b.start,dur:b.dur,weeks:[]};
+      // Groupes distincts par langue : Anglais Gr1 et Espagnol Gr1 ne sont pas les memes etudiants
+      t.year=b.year;t.level=b.level;
+      t.groups=[groupByName(b.grp)];
+      if(b.weeks==='all')t.weeks=weeks.map(function(w){return w.monday;}).filter(function(m){var dt=addDays(m,b.day);return !ferie(dt)&&!vacation(dt);});
+      else t.weeks=weeks.filter(function(w){return b.weeks.indexOf(w.num)>=0&&w.monday>=sem.start;}).map(function(w){return w.monday;});
+      S.template.push(t);cnt++;
+    });
+    S.seeded=true;S.seededRes=true;
+    S.current=sem.id;twDay=0;
+    var res=autoSync();
+    fixWeek(S);save();renderAll();closeModal();
+    toast(cnt+' blocs importés dans le semestre « '+sem.name+' ». '+res.n+' séances générées dans le semainier. Rien n\'a été modifié dans les autres semestres.');
+  }).catch(function(){toast('Import impossible : fichier du PDF introuvable.');});
+}
+
 function semesterTab(){
   var v=S.view;
   var box=h('div',{},h('p',{class:'hint'},'Un emploi du temps par semestre. Renomme les semestres et règle leurs dates de début et de fin. Les groupes, enseignants, salles et langues sont communs à tous les semestres ; les cours et les séances sont propres à chaque semestre.'));
@@ -2140,6 +2179,9 @@ function semesterTab(){
   };
   nin.addEventListener('keydown',function(e){if(e.key==='Enter')add();});
   box.appendChild(h('div',{class:'rrow add'},nin,h('button',{onclick:add},'+ Ajouter')));
+  box.appendChild(h('div',{class:'rrow'},h('button',{onclick:function(){
+    confirmBox('Importer l\'EDT du PDF « Langues semestre impair » (lundi à vendredi) dans un NOUVEAU semestre ? Les semestres existants ne sont pas modifiés. Les enseignants, salles, langues et groupes manquants sont ajoutés.',importPdfEdt,'Importer',function(){openConfig('semester');});
+  }},'Importer l\'EDT du PDF (nouveau semestre)')));
 
   var days=h('select',{},h('option',{value:'5'},'Lundi au vendredi'),h('option',{value:'6'},'Lundi au samedi'));
   days.value=String(v.days);
