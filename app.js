@@ -894,7 +894,7 @@ function renderRoomBar(){
   card.hidden=!on;
   if(!on)return;
   card.appendChild(h('h2',{},'Blocs à glisser'));
-  card.appendChild(h('p',{class:'hint'},'Choisis le jour en haut (une page par jour, avec matin et après-midi). Glisse une spécialité à l\'heure voulue, puis un enseignant, puis une salle sur le bloc, dans l\'ordre que tu veux. Un bloc dure 2 h. Le nombre de séances de chaque cours se règle dans Configuration, avant de placer.'));
+  card.appendChild(h('p',{class:'hint'},'Choisis le jour en haut (une page par jour, avec matin et après-midi). Glisse une spécialité à l\'heure voulue, dans la colonne de la salle, puis un enseignant, puis une salle sur le bloc, dans l\'ordre que tu veux. Un bloc dure 2 h. Le nombre de séances de chaque cours se règle dans Configuration, avant de placer.'));
   card.appendChild(h('button',{onclick:openBulkWeeks,title:'Régler les semaines de tous les blocs d\'une spécialité et d\'un groupe'},'Semaines de plusieurs blocs'));
   function sec(title,kind,items,cls,label){
     var box=h('div',{class:'palsec'},h('div',{class:'lb'},title));
@@ -1134,7 +1134,7 @@ function renderTypeWeek(){
       h('button',{onclick:nextYear,title:'Reprendre la semaine type pour l\'année universitaire suivante'},'Année universitaire suivante'),
       h('button',{class:'primary',onclick:generateWeekly,disabled:!pn},'Générer le semainier'));
     root.appendChild(bar);
-    root.appendChild(h('p',{class:'hint tw-help'},'Choisis un jour avec les onglets, puis glisse une spécialité depuis la palette de droite vers le matin ou l\'après-midi, puis un enseignant, une salle et des groupes sur le bloc. Glisse un bloc pour le déplacer. Clique sur un bloc pour modifier ses semaines.'));
+    root.appendChild(h('p',{class:'hint tw-help'},'Choisis un jour avec les onglets, puis glisse une spécialité depuis la palette de droite vers le matin ou l\'après-midi, dans la colonne d\'une salle, puis un enseignant, une salle et des groupes sur le bloc. Glisse un bloc pour le déplacer. Clique sur un bloc pour modifier ses semaines.'));
   }
   var hasAny=S.template.some(function(t){return t.sem===S.current;});
   if(!agg.length){
@@ -1183,26 +1183,34 @@ function renderTypeWeek(){
     parts.forEach(function(pt){
       if(!CAN_EDIT&&!pt.list.length)return;
       var T0=pt.T0,T1=pt.T1,list=pt.list,day=d;
-      var lay=layout(list),maxL=1;
-      list.forEach(function(a){maxL=Math.max(maxL,lay[a.id].lanes);});
-      var H=Math.round((T1-T0)*PT),minW=52+maxL*170;
+      var H=Math.round((T1-T0)*PT);
+      var roomIds=S.rooms.map(function(r){return r.id;});
+      if(list.some(function(a){return !a.room||roomIds.indexOf(a.room)<0;})||!roomIds.length)roomIds.push('');
+      if(!CAN_EDIT)roomIds=roomIds.filter(function(rid){return list.some(function(a){return rid?a.room===rid:(!a.room||S.rooms.every(function(r){return r.id!==a.room;}));});});
+      var gtpl='52px repeat('+roomIds.length+',minmax(130px,1fr))',minW=52+roomIds.length*130;
+      var heads=h('div',{class:'heads tw-heads',style:'grid-template-columns:'+gtpl+';min-width:'+minW+'px'},h('div',{class:'gut'}));
+      roomIds.forEach(function(rid){heads.appendChild(h('div',{class:'dh'},rid?nm('rooms',rid):'Sans salle'));});
       var gut=h('div',{class:'gut',style:'height:'+H+'px'});
       var hr;
       for(hr=Math.ceil(T0/60);hr<=T1/60;hr++)gut.appendChild(h('div',{class:'hl',style:'top:'+Math.round((hr*60-T0)*PT)+'px'},pad(hr)+':00'));
-      var col=h('div',{class:'col',style:'height:'+H+'px'});
-      col.addEventListener('click',function(e){
-        if(!CAN_EDIT||e.target!==col)return;
-        var r=col.getBoundingClientRect();
-        var m=clamp(T0+Math.floor((e.clientY-r.top)/PT/SNAP)*SNAP,T0,Math.max(T0,T1-120));
-        var ac=armed?course(armed):null;
-        openTplEditor(null,tplPreFromCourse(ac&&ac.sem===SEM().id?ac:null,day,'',m));
-      });
-      if(CAN_EDIT){
-        col.addEventListener('dragover',function(e){e.preventDefault();col.classList.add('dropok');});
-        col.addEventListener('dragleave',function(e){if(e.target===col)col.classList.remove('dropok');});
-        col.addEventListener('drop',function(e){clearDrop();dropOnColumn(e,col,day,null,T0,T1);});
-      }
-      list.forEach(function(a){
+      var body=h('div',{class:'body',style:'grid-template-columns:'+gtpl+';height:'+H+'px;min-width:'+minW+'px;--hh:'+(60*PT)+'px'},gut);
+      roomIds.forEach(function(rid){
+        var col=h('div',{class:'col',style:'height:'+H+'px'});
+        col.addEventListener('click',function(e){
+          if(!CAN_EDIT||e.target!==col)return;
+          var r=col.getBoundingClientRect();
+          var m=clamp(T0+Math.floor((e.clientY-r.top)/PT/SNAP)*SNAP,T0,Math.max(T0,T1-120));
+          var ac=armed?course(armed):null;
+          openTplEditor(null,tplPreFromCourse(ac&&ac.sem===SEM().id?ac:null,day,rid,m));
+        });
+        if(CAN_EDIT){
+          col.addEventListener('dragover',function(e){e.preventDefault();col.classList.add('dropok');});
+          col.addEventListener('dragleave',function(e){if(e.target===col)col.classList.remove('dropok');});
+          col.addEventListener('drop',function(e){clearDrop();dropOnColumn(e,col,day,rid,T0,T1);});
+        }
+        var rl=list.filter(function(a){return rid?a.room===rid:(!a.room||S.rooms.every(function(r){return r.id!==a.room;}));});
+        var lay=layout(rl);
+        rl.forEach(function(a){
         var s=a.slot,L=lay[a.id],c=slotColor(s);
         var gl=s.groups.map(function(g){return nm('groups',g);}).join(', ');
         var tl=s.teachers.map(function(t){return nm('teachers',t);}).join(', ');
@@ -1257,11 +1265,12 @@ function renderTypeWeek(){
             }
           });
         }
-        col.appendChild(evT);
+          col.appendChild(evT);
+        });
+        body.appendChild(col);
       });
-      var body=h('div',{class:'body',style:'grid-template-columns:52px 1fr;height:'+H+'px;min-width:'+minW+'px;--hh:'+(60*PT)+'px'},gut,col);
       box.appendChild(h('h3',{class:'tw-part'},pt.name+' ('+pad(Math.floor(T0/60))+':00 à '+pad(Math.floor(T1/60))+':00)'));
-      box.appendChild(h('div',{class:'tw-scroll'},body));
+      box.appendChild(h('div',{class:'tw-scroll'},heads,body));
     });
     if(!items.length&&!CAN_EDIT)box.appendChild(h('div',{class:'tw-none'},'Aucun cours'));
     root.appendChild(box);
@@ -2277,10 +2286,10 @@ var TOUR=[
   {sel:null,t:'Bienvenue Chef Bichette',p:'Cette appli construit les emplois du temps d\'un semestre en deux temps. D\'abord la semaine type, pour toutes les langues : tu glisses des blocs (langue, enseignant, salle) dans une grille jour par jour. Ensuite tu cliques sur « Générer le semainier » : le calendrier de chaque semaine se remplit, et un bouton par enseignant permet de voir où il est et avec qui. Un tour rapide ?'},
   {sel:'#sem',t:'1. Choisis le semestre',p:'De S5 à S10. Chaque semestre a sa propre semaine type, son semainier et ses dates de début et de fin.'},
   {sel:'#cfg',t:'2. Prépare la configuration',p:'Les langues (avec leurs couleurs), les groupes (TC3, TC4, TC2A3, TC2A4 de Gr1 à Gr4, M1 GC, M1 GM, chacun pouvant être rattaché à un autre groupe), les 26 enseignants et les salles sont déjà prêts. Les cours (matière, groupes, enseignant, nombre de séances) sont facultatifs : tu peux construire la semaine type directement avec les blocs spécialité, enseignant et salle.',view:'type'},
-  {sel:'#wtype',t:'3. Ouvre la semaine type',p:'Ce bouton bascule entre la semaine type et le calendrier. Dans la semaine type, il y a une page par jour (onglets Lundi à Vendredi), avec le matin et l\'après-midi. Chaque bloc porte la couleur de sa langue, la spécialité, l\'enseignant, la salle et les semaines concernées.',view:'type'},
-    {sel:'#pal',t:'4. Glisse une spécialité dans la grille',p:'À droite, les blocs Spécialités, Enseignants, Salles et Groupes. Ouvre l\'onglet Lundi, prends par exemple « Anglais » et dépose-le à 8h le matin : un bloc de 2 h est créé, avec toutes les semaines hors vacances et jours fériés par défaut.',view:'type'},
+  {sel:'#wtype',t:'3. Ouvre la semaine type',p:'Ce bouton bascule entre la semaine type et le calendrier. Dans la semaine type, il y a une page par jour (onglets Lundi à Vendredi), avec le matin et l\'après-midi, une colonne par salle, comme ton PDF. Chaque bloc porte la couleur de sa langue, la spécialité, l\'enseignant, la salle et les semaines concernées.',view:'type'},
+    {sel:'#pal',t:'4. Glisse une spécialité dans la grille',p:'À droite, les blocs Spécialités, Enseignants, Salles et Groupes. Ouvre l\'onglet Lundi, prends par exemple « Anglais » et dépose-le à 8h le matin, dans la colonne d\'une salle : un bloc de 2 h est créé, avec toutes les semaines hors vacances et jours fériés par défaut.',view:'type'},
   {sel:'#pal',t:'5. Ajoute l\'enseignant, puis la salle',p:'Glisse ensuite le nom de l\'enseignant sur le bloc, puis la salle, puis les groupes. L\'ordre n\'a pas d\'importance : le bloc affiche toujours la spécialité, l\'enseignant et la salle, dans cet ordre.',view:'type'},
-  {sel:'#tt',t:'6. Déplace et règle les blocs',p:'Pour changer l\'heure d\'un bloc, glisse-le vers sa nouvelle place dans la page du jour ; pour le changer de jour, dépose-le sur l\'onglet du jour. Pour changer de salle, dépose une autre salle dessus. Clique sur un bloc pour régler ses semaines. Les conflits (même groupe, enseignant ou salle en même temps, salle trop petite) sont entourés de rouge et listés dans Contrôle.',view:'type'},
+  {sel:'#tt',t:'6. Déplace et règle les blocs',p:'Pour changer l\'heure ou la salle d\'un bloc, glisse-le vers sa nouvelle place dans la page du jour ; pour le changer de jour, dépose-le sur l\'onglet du jour. Clique sur un bloc pour régler ses semaines. Les conflits (même groupe, enseignant ou salle en même temps, salle trop petite) sont entourés de rouge et listés dans Contrôle.',view:'type'},
   {sel:'.tw-gen',t:'7. Génère le semainier',p:'Quand la semaine type est prête, clique sur « Générer le semainier ». Chaque bloc devient une séance du calendrier, pour chacune de ses semaines. Le compteur indique combien de changements restent à répercuter : tu peux modifier la semaine type puis régénérer à tout moment.',view:'type'},
   {sel:'#tbar',t:'8. Un bouton par enseignant',p:'Dans le calendrier, clique sur le nom d\'un enseignant : tu vois sa semaine, avec pour chaque séance la salle et les groupes. Les flèches changent de semaine et « Imprimer » donne sa feuille de la semaine. « Tous » revient à la vue complète. La vue par groupe, par salle ou par langue reste disponible dans le menu « Vue ».',view:'cal'},
   {sel:'.top .wk',t:'9. Parcours le semainier',p:'Le numéro de semaine est celui de la semaine ISO (48, 49, 53...). Les jours fériés sont signalés en orange et les vacances de la zone B en bleu. Tu peux aussi sauter à une date précise.',view:'cal'},
