@@ -133,7 +133,7 @@ module.exports = async function handler(req, res) {
 
     const opts = { access: 'private', contentType: 'application/json', addRandomSuffix: false };
     if (body.force) opts.allowOverwrite = true;
-    else if (body.rev) { opts.allowOverwrite = true; opts.ifMatch = body.rev; }
+    else if (body.rev) { opts.allowOverwrite = true; opts.ifMatch = String(body.rev).replace(/^W\//, ''); }
     else opts.allowOverwrite = false;
     try {
       const out = await put(PATH, text, opts);
