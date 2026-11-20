@@ -2106,51 +2106,37 @@ function findByName(kind,name,extra){
   if(!x){x=Object.assign({id:uid(),name:name},extra||{});S[kind].push(x);}
   return x.id;
 }
+function findTeacher(p){
+  var k=p.toLowerCase(),x=S.teachers.filter(function(t){var n=t.name.toLowerCase();return n===k||n.split(' ').slice(-1)[0]===k;})[0];
+  if(!x){x={id:uid(),name:p.charAt(0)+p.slice(1).toLowerCase()};S.teachers.push(x);}
+  return x.id;
+}
 function importPdfEdt(){
   fetch('pdf-edt.json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
     var sem=S.semesters.filter(function(x){return x.name==='S5';})[0]||SEM(),prev=S.current;
-    var langColor={'Anglais':'bleu','Allemand':'orange','Espagnol':'rose','Booster':'violet','Anglais renforcé':'turquoise'};
-    var weeks=semWeeks(sem.id),cnt=0,skipped=0;
+    var langColor={'Anglais':'bleu','Allemand':'orange','Espagnol':'rose'};
+    var weeks=semWeeks(sem.id),cnt=0;
+    // Remplace l'ancien contenu de S5 (blocs et seances generees)
+    var old={};
+    S.template.forEach(function(o){if(o.sem===sem.id)old[o.id]=1;});
+    S.template=S.template.filter(function(o){return o.sem!==sem.id;});
+    S.skips=S.skips.filter(function(k){return !old[k.tpl];});
+    S.slots=S.slots.filter(function(x){return !(x.sem===sem.id&&x.tpl&&old[x.tpl]);});
     d.blocks.forEach(function(b){
-      var ln=b.spe;
-      // Langues deja creees par ta collegue pour ces cases du PDF
-      if(b.spe==='Booster')ln=b.year==='TC3'?'Booster 3':'Booster 4 / GD2 esp';
-      else if(b.year==='GD1')ln='GD1 all/esp';
-      else if(b.year==='GD2')ln=b.spe==='Espagnol'?'Booster 4 / GD2 esp':'GD2 all';
-      if(!S.languages.some(function(l){return l.name.toLowerCase()===ln.toLowerCase();}))ln=b.spe;
-      var lid=findByName('languages',ln,{color:langColor[b.spe]||'gris'});
-      var t={id:uid(),sem:sem.id,course:'',lang:lid,year:'',level:'',groups:[],
-        teachers:b.profs.map(function(p){return findByName('teachers',p);}),
+      var lid=findByName('languages',b.spe,{color:langColor[b.spe]||'gris'});
+      var t={id:uid(),sem:sem.id,course:'',lang:lid,year:b.year,level:b.level||'',groups:[],
+        teachers:b.profs.map(findTeacher),
         room:b.room?findByName('rooms',b.room,{cap:0}):'',room2:b.room2?findByName('rooms',b.room2,{cap:0}):'',
         day:b.day,start:b.start,dur:b.dur,weeks:[]};
-      // Groupes distincts par langue : Anglais Gr1 et Espagnol Gr1 ne sont pas les memes etudiants
-      t.year=b.year;t.level=b.level;
-      t.groups=[];
-      if(b.weeks==='all')t.weeks=weeks.map(function(w){return w.monday;}).filter(function(m){var dt=addDays(m,b.day);return !ferie(dt)&&!vacation(dt);});
-      else t.weeks=weeks.filter(function(w){return b.weeks.indexOf(w.num)>=0&&w.monday>=sem.start;}).map(function(w){return w.monday;});
-      var dup=S.template.some(function(o){return o.sem===sem.id&&o.day===t.day&&o.start===t.start&&o.dur===t.dur&&o.room===t.room&&o.room2===t.room2&&o.lang===t.lang&&o.year===t.year&&o.level===t.level&&JSON.stringify(o.teachers)===JSON.stringify(t.teachers);});
-      if(dup){
-        // Reimport : on simplifie les anciens blocs (plus de groupe cree par cas)
-        S.template.forEach(function(o){if(o.sem===sem.id&&o.day===t.day&&o.start===t.start&&o.dur===t.dur&&o.room===t.room&&o.room2===t.room2&&o.lang===t.lang&&o.year===t.year&&o.level===t.level&&JSON.stringify(o.teachers)===JSON.stringify(t.teachers)&&o.groups.length)o.groups=[];});
-        skipped++;return;
-      }
+      t.weeks=weeks.map(function(w){return w.monday;}).filter(function(m){var dt=addDays(m,b.day);return !ferie(dt)&&!vacation(dt);});
       S.template.push(t);cnt++;
     });
-    // Supprime les groupes crees par un ancien import et devenus inutiles
-    var names={};d.blocks.forEach(function(b){names[(b.grp||'').toLowerCase()]=true;});
-    var used={};
-    S.courses.forEach(function(c){c.groups.forEach(function(g){used[g]=1;});});
-    S.template.forEach(function(o){o.groups.forEach(function(g){used[g]=1;});});
-    S.slots.forEach(function(o){if(!o.tpl||o.edited)o.groups.forEach(function(g){used[g]=1;});});
-    var before=S.groups.length;
-    S.groups=S.groups.filter(function(g){return !names[g.name.toLowerCase()]||used[g.id];});
-    var removedG=before-S.groups.length;
     S.seeded=true;S.seededRes=true;
     S.current=sem.id;
     var res=autoSync();
     S.current=prev;
     fixWeek(S);save();renderAll();closeModal();
-    toast(cnt+' blocs ajoutés au semestre '+sem.name+(skipped?' ('+skipped+' déjà présents, simplifiés)':'')+(removedG?', '+removedG+' groupes inutiles supprimés':'')+', '+res.n+' séances générées. Choisis '+sem.name+' en haut pour les voir. Les semestres pairs ne sont pas touchés.');
+    toast(cnt+' blocs importés dans '+sem.name+' (ancien contenu remplacé), '+res.n+' séances générées. Choisis '+sem.name+' en haut pour les voir. Les semestres pairs ne sont pas touchés.');
   }).catch(function(){toast('Import impossible : fichier du PDF introuvable.');});
 }
 
@@ -2198,8 +2184,8 @@ function semesterTab(){
   nin.addEventListener('keydown',function(e){if(e.key==='Enter')add();});
   box.appendChild(h('div',{class:'rrow add'},nin,h('button',{onclick:add},'+ Ajouter')));
   box.appendChild(h('div',{class:'rrow'},h('button',{onclick:function(){
-    confirmBox('Ajouter l\'EDT du PDF « Langues semestre impair » (lundi à vendredi) au semestre S5 ? Les blocs sont ajoutés sans rien supprimer ni modifier ; les semestres pairs ne sont pas touchés. Les enseignants, salles, langues et groupes manquants sont créés, les existants réutilisés.',importPdfEdt,'Importer',function(){openConfig('semester');});
-  }},'Ajouter l\'EDT du PDF au semestre S5')));
+    confirmBox('Remplacer le contenu de S5 par l\'EDT du PDF 2026-2027 (semestre impair, lundi à vendredi) ? Les blocs actuels de S5 sont supprimés et remplacés ; les semestres pairs ne sont pas touchés. Pense à exporter une sauvegarde avant.',importPdfEdt,'Remplacer',function(){openConfig('semester');});
+  }},'Remplacer S5 par l\'EDT du PDF 2026-2027')));
 
   var days=h('select',{},h('option',{value:'5'},'Lundi au vendredi'),h('option',{value:'6'},'Lundi au samedi'));
   days.value=String(v.days);
@@ -2482,7 +2468,7 @@ var TOUR_KEY='edt-tour-v1';
 var TOUR=[
   {sel:null,t:'Bienvenue Chef Bichette',p:'Cette appli construit les emplois du temps d\'un semestre en deux temps. D\'abord la semaine type, pour toutes les langues : tu glisses des blocs (spécialité, année, niveau, enseignant, salle) dans une grille jour par jour. Ensuite le calendrier de chaque semaine se remplit tout seul, avec les alertes jours fériés et vacances zone B, et un bouton par enseignant permet de voir où il est et avec qui. Un tour rapide ?'},
   {sel:'#sem',t:'1. Choisis le semestre',p:'De S5 à S10. Chaque semestre a sa propre semaine type, son semainier et ses dates de début et de fin.'},
-  {sel:'#cfg',t:'2. Prépare la configuration',p:'Les langues (avec leurs couleurs), les groupes (TC3, TC4, TC2A3, TC2A4 de Gr1 à Gr4, M1 GC, M1 GM, chacun pouvant être rattaché à un autre groupe), les 26 enseignants et les salles sont déjà prêts. Pour reprendre ton PDF « semestre impair » d\'un coup, ouvre Configuration, onglet Semestres, puis « Ajouter l\'EDT du PDF au semestre S5 » (rien n\'est supprimé). Les cours (matière, groupes, enseignant, nombre de séances) sont facultatifs : tu peux construire la semaine type directement avec les blocs spécialité, enseignant et salle.',view:'type'},
+  {sel:'#cfg',t:'2. Prépare la configuration',p:'Les langues (avec leurs couleurs), les groupes (TC3, TC4, TC2A3, TC2A4 de Gr1 à Gr4, M1 GC, M1 GM, chacun pouvant être rattaché à un autre groupe), les 26 enseignants et les salles sont déjà prêts. Pour reprendre ton PDF 2026-2027 d\'un coup, ouvre Configuration, onglet Semestres, puis « Remplacer S5 par l\'EDT du PDF 2026-2027 ». Les cours (matière, groupes, enseignant, nombre de séances) sont facultatifs : tu peux construire la semaine type directement avec les blocs spécialité, enseignant et salle.',view:'type'},
   {sel:'#wtype',t:'3. Ouvre la semaine type',p:'Ce bouton bascule entre la semaine type et le calendrier. Dans la semaine type, il y a une page par jour (onglets Lundi à Vendredi), avec le matin et l\'après-midi, une colonne par salle, comme ton PDF. Chaque bloc porte la couleur de sa langue, la spécialité, l\'enseignant, la salle et les semaines concernées.',view:'type'},
     {sel:'#pal',t:'4. Glisse une spécialité dans la grille',p:'À droite, les blocs Spécialités, Enseignants, Salles et Groupes. Ouvre l\'onglet Lundi, prends par exemple « Anglais » et dépose-le à 8h le matin, dans la case d\'une salle : un bloc de 2 h est créé, avec toutes les semaines hors vacances et jours fériés par défaut.',view:'type'},
   {sel:'#pal',t:'5. Ajoute l\'enseignant, puis la salle',p:'Glisse ensuite sur le bloc l\'année (TC3, TC2A3, TC4...), le niveau de groupe (Gr1 à Gr4) et le nom de l\'enseignant. L\'ordre n\'a pas d\'importance : le bloc affiche toujours l\'année, la spécialité avec son niveau (Anglais-G1), puis l\'enseignant, comme dans ton PDF.',view:'type'},
