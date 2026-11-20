@@ -2125,19 +2125,32 @@ function importPdfEdt(){
         day:b.day,start:b.start,dur:b.dur,weeks:[]};
       // Groupes distincts par langue : Anglais Gr1 et Espagnol Gr1 ne sont pas les memes etudiants
       t.year=b.year;t.level=b.level;
-      t.groups=[groupByName(b.grp)];
+      t.groups=[];
       if(b.weeks==='all')t.weeks=weeks.map(function(w){return w.monday;}).filter(function(m){var dt=addDays(m,b.day);return !ferie(dt)&&!vacation(dt);});
       else t.weeks=weeks.filter(function(w){return b.weeks.indexOf(w.num)>=0&&w.monday>=sem.start;}).map(function(w){return w.monday;});
       var dup=S.template.some(function(o){return o.sem===sem.id&&o.day===t.day&&o.start===t.start&&o.dur===t.dur&&o.room===t.room&&o.room2===t.room2&&o.lang===t.lang&&o.year===t.year&&o.level===t.level&&JSON.stringify(o.teachers)===JSON.stringify(t.teachers);});
-      if(dup){skipped++;return;}
+      if(dup){
+        // Reimport : on simplifie les anciens blocs (plus de groupe cree par cas)
+        S.template.forEach(function(o){if(o.sem===sem.id&&o.day===t.day&&o.start===t.start&&o.dur===t.dur&&o.room===t.room&&o.room2===t.room2&&o.lang===t.lang&&o.year===t.year&&o.level===t.level&&JSON.stringify(o.teachers)===JSON.stringify(t.teachers)&&o.groups.length)o.groups=[];});
+        skipped++;return;
+      }
       S.template.push(t);cnt++;
     });
+    // Supprime les groupes crees par un ancien import et devenus inutiles
+    var names={};d.blocks.forEach(function(b){names[(b.grp||'').toLowerCase()]=true;});
+    var used={};
+    S.courses.forEach(function(c){c.groups.forEach(function(g){used[g]=1;});});
+    S.template.forEach(function(o){o.groups.forEach(function(g){used[g]=1;});});
+    S.slots.forEach(function(o){if(!o.tpl||o.edited)o.groups.forEach(function(g){used[g]=1;});});
+    var before=S.groups.length;
+    S.groups=S.groups.filter(function(g){return !names[g.name.toLowerCase()]||used[g.id];});
+    var removedG=before-S.groups.length;
     S.seeded=true;S.seededRes=true;
     S.current=sem.id;
     var res=autoSync();
     S.current=prev;
     fixWeek(S);save();renderAll();closeModal();
-    toast(cnt+' blocs ajoutés au semestre '+sem.name+(skipped?' ('+skipped+' déjà présents, ignorés)':'')+', '+res.n+' séances générées. Choisis '+sem.name+' en haut pour les voir. Les semestres pairs ne sont pas touchés.');
+    toast(cnt+' blocs ajoutés au semestre '+sem.name+(skipped?' ('+skipped+' déjà présents, simplifiés)':'')+(removedG?', '+removedG+' groupes inutiles supprimés':'')+', '+res.n+' séances générées. Choisis '+sem.name+' en haut pour les voir. Les semestres pairs ne sont pas touchés.');
   }).catch(function(){toast('Import impossible : fichier du PDF introuvable.');});
 }
 
